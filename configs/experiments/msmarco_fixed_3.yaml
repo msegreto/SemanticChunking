@@ -1,0 +1,54 @@
+experiment_name: "baseline_pipeline"
+
+dataset:
+  name: "msmarco"
+  data_dir: "data/raw/msmarco"
+  split: "test"
+  download_if_missing: true
+  use_normalized_if_available: true
+  save_normalized: true
+
+
+split:
+  split:
+  type: sentence
+  model: en_core_web_sm
+  save_output: true
+  output_path: data/processed/msmarco/sentences.jsonl
+
+router:
+  enabled: false
+  name: "moc"
+
+chunking:
+  type: fixed
+  dataset: msmarco
+  n_chunks: 3
+  overlap_sentences: 0
+  save_chunks: false
+
+embedding:
+  name: "all-mpnet-base-v2"
+  batch_size: 32
+  normalize_embeddings: true
+  show_progress_bar: true
+
+retrieval:
+  enabled: true
+  name: "numpy"
+  distance: "cosine"
+  normalize: true
+
+evaluation:
+  intrinsic: true
+  intrinsic_evaluator: "default"
+  extrinsic: true
+  extrinsic_evaluator: document_retrieval
+  results_dir: results/extrinsic
+  extrinsic_tasks:
+    document_retrieval:
+      ks: [1, 3, 5, 10]
+      normalized_dataset_dir: data/normalized/msmarco
+      split: dev
+      query_sample_size: 100
+      query_sample_seed: 42

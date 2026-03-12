@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Data artifacts
+data/raw/*
+data/processed/*
+data/splits/*
+data/chunks/*
+data/embeddings/*
+data/indexes/*
+data/normalized/*
+
+# Keep folder structure
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/splits/.gitkeep
+!data/chunks/.gitkeep
+!data/embeddings/.gitkeep
+!data/indexes/.gitkeep
+
+# Results
+results/intrinsic/*
+results/retrieval/*
+results/generation/*
+results/ablations/*
+results/logs/*
+
+!results/intrinsic/.gitkeep
+!results/retrieval/.gitkeep
+!results/generation/.gitkeep
+!results/ablations/.gitkeep
+!results/logs/.gitkeep
+
+TODO.md
+
+.hf_cache/

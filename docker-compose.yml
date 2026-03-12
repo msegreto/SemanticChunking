@@ -1,0 +1,25 @@
+services:
+  semantic-chunking:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: semantic-chunking-framework
+
+    working_dir: /workspace
+
+    volumes:
+      - .:/workspace
+      - ./.hf_cache:/workspace/.hf_cache
+
+    environment:
+      HF_HOME: /workspace/.hf_cache
+      TRANSFORMERS_CACHE: /workspace/.hf_cache/transformers
+      HUGGINGFACE_HUB_CACHE: /workspace/.hf_cache/hub
+      HF_TOKEN: ${HF_TOKEN:-}
+
+    command: >
+      python -u -m scripts.run_pipeline --config configs/experiments/base.yaml
+
+# To run the pipeline, use the following command in the terminal:
+# docker-compose up --build
