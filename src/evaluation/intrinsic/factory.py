@@ -1,23 +1,14 @@
 from __future__ import annotations
 
-from typing import Dict, Type
-
-from src.evaluation.intrinsic.base import BaseIntrinsicEvaluator
-from src.evaluation.intrinsic.dummy import DummyIntrinsicEvaluator
+from src.evaluation.intrinsic.default import DefaultIntrinsicEvaluator
 
 
 class IntrinsicEvaluatorFactory:
-    _registry: Dict[str, Type[BaseIntrinsicEvaluator]] = {
-        "default": DummyIntrinsicEvaluator,
-    }
+    @staticmethod
+    def create(name: str):
+        normalized = name.lower().strip()
 
-    @classmethod
-    def register(cls, name: str, evaluator_cls: Type[BaseIntrinsicEvaluator]) -> None:
-        cls._registry[name] = evaluator_cls
+        if normalized in {"default", "moc", "mixture_of_chunking"}:
+            return DefaultIntrinsicEvaluator()
 
-    @classmethod
-    def create(cls, name: str) -> BaseIntrinsicEvaluator:
-        if name not in cls._registry:
-            available = ", ".join(sorted(cls._registry.keys()))
-            raise ValueError(f"Unknown intrinsic evaluator: '{name}'. Available: {available}")
-        return cls._registry[name]()
+        raise ValueError(f"Unknown intrinsic evaluator: {name}")

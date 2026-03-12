@@ -29,6 +29,28 @@ class SentenceSplitter(BaseSplitter):
             / metadata["normalized_files"]["documents"]
         )
 
+        output_file = Path(output_path) if output_path else None
+
+        # Fast path: riusa split già salvato se presente
+        if save_output and output_file and output_file.exists() and output_file.stat().st_size > 0:
+            print(f"[SPLIT] reusing existing sentence split from {output_file}")
+            split_units = self._load_existing_split(output_file)
+            doc_stats = self._build_doc_stats(split_units)
+
+            return {
+                "split_units": split_units,
+                "documents": doc_stats,
+                "metadata": {
+                    "split_type": "sentence",
+                    "spacy_model": model_name,
+                    "num_documents": len(doc_stats),
+                    "num_units": len(split_units),
+                    "source_metadata": metadata,
+                    "reused_existing_split": True,
+                    "split_path": str(output_file),
+                },
+            }
+
         nlp = self._load_spacy_model(model_name)
 
         split_units: List[Dict[str, Any]] = []
@@ -37,23 +59,19 @@ class SentenceSplitter(BaseSplitter):
         unit_id = 0
 
         with open(documents_path, "r", encoding="utf-8") as f:
-
             for line in f:
-
                 doc = json.loads(line)
 
                 doc_id = doc["id"]
                 text = doc["text"]
 
                 if not text or not str(text).strip():
-
                     doc_stats.append(
                         {
                             "doc_id": doc_id,
                             "num_sentences": 0,
                         }
                     )
-
                     continue
 
                 parsed = nlp(text)
@@ -61,7 +79,6 @@ class SentenceSplitter(BaseSplitter):
                 sentence_count = 0
 
                 for sent_idx, sent in enumerate(parsed.sents):
-
                     sent_text = sent.text.strip()
 
                     if not sent_text:
@@ -88,9 +105,7 @@ class SentenceSplitter(BaseSplitter):
                     }
                 )
 
-        if save_output and output_path:
-
-            output_file = Path(output_path)
+        if save_output and output_file:
             output_file.parent.mkdir(parents=True, exist_ok=True)
 
             with open(output_file, "w", encoding="utf-8") as f:
@@ -106,8 +121,37 @@ class SentenceSplitter(BaseSplitter):
                 "num_documents": len(doc_stats),
                 "num_units": len(split_units),
                 "source_metadata": metadata,
+                "reused_existing_split": False,
+                "split_path": str(output_file) if output_file else None,
             },
         }
+
+    def _load_existing_split(self, output_file: Path) -> List[Dict[str, Any]]:
+        split_units: List[Dict[str, Any]] = []
+
+        with open(output_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                split_units.append(json.loads(line))
+
+        return split_units
+
+    def _build_doc_stats(self, split_units: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        counts: Dict[str, int] = {}
+
+        for unit in split_units:
+            doc_id = unit["doc_id"]
+            counts[doc_id] = counts.get(doc_id, 0) + 1
+
+        return [
+            {
+                "doc_id": doc_id,
+                "num_sentences": num_sentences,
+            }
+            for doc_id, num_sentences in counts.items()
+        ]
 
     def _load_spacy_model(self, model_name: str):
 
@@ -118,7 +162,6 @@ class SentenceSplitter(BaseSplitter):
             nlp = spacy.load(model_name)
 
         except Exception:
-
             nlp = spacy.blank("en")
             nlp.add_pipe("sentencizer")
 

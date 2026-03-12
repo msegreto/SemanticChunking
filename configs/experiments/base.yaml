@@ -40,7 +40,25 @@ retrieval:
 
 evaluation:
   intrinsic: true
-  intrinsic_evaluator: "default"
+  intrinsic_evaluator: default
+
+  intrinsic_metrics:
+    boundary_clarity: true
+    chunk_stickiness: true
+
+  intrinsic_model:
+    backend: lexical # or hf_causal_lm
+    name: sshleifer/tiny-gpt2 # distil-gpt2 or sshleifer/tiny-gpt2 or gpt2
+    device: auto
+    max_length: 1024
+    trust_remote_code: false
+    edge_threshold: 0.0
+    local_window: 1
+  
+  save:
+    enabled: true
+    yaml_name: fiqa_intrinsic_results
+
   extrinsic: true
   extrinsic_evaluator: document_retrieval
   results_dir: results/extrinsic
