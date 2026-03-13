@@ -1,42 +1,14 @@
-# Thesis Repo Structures
+# Thesis Repo
 
-Modular framework for semantic chunking experimentation.
+Framework modulare per esperimenti di chunking, embedding, retrieval e valutazione su dataset BEIR e MSMARCO.
 
-Root/
-├── configs/
-│   ├── datasets/
-│   ├── splitters/
-│   ├── chunkers/
-│   ├── embedders/
-│   ├── evaluations/
-│   └── experiments/
-├── data/
-│   ├── raw/
-│   ├── processed/
-│   ├── splits/
-│   ├── chunks/
-│   ├── embeddings/
-│   └── indexes/
-├── results/
-│   ├── intrinsic/
-│   ├── retrieval/
-│   ├── generation/
-│   └── ablations/
-├── src/
-│   ├── datasets/
-│   ├── splitting/
-│   ├── routing/
-│   ├── chunking/
-│   ├── evaluation/
-│   │   ├── intrinsic/
-│   │   └── extrinsic/
-│   ├── embeddings/
-│   ├── retrieval/
-│   ├── generation/
-│   ├── pipelines/
-│   └── utils/
-├── docs/
-│   ├── FRAMEWORK.md
-│   └── notes/
-└── scripts/
-'''
+Il flusso principale parte da `scripts/run_pipeline.py`, legge una configurazione in `configs/experiments/` e orchestra i moduli sotto `src/`.
+
+Cartelle principali:
+- `configs/`: configurazioni degli esperimenti.
+- `src/`: codice applicativo del framework.
+- `data/`: dataset raw, cache normalizzate e artefatti intermedi.
+- `results/`: output delle valutazioni.
+- `scripts/`: entrypoint CLI.
+- `docs/`: note di progettazione.
+- `tests/`: struttura test, oggi quasi vuota.

@@ -36,6 +36,10 @@ results/logs/*
 !results/ablations/.gitkeep
 !results/logs/.gitkeep
 
+# File thesis status tracker
 TODO.md
-
 .hf_cache/
+docs/
+
+#Codex
+AGENTS.md

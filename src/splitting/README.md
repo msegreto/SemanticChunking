@@ -1,28 +1,17 @@
 # Splitting Module
 
-This module implements the **text splitting stage** of the pipeline.  
-Its purpose is to transform normalized documents into smaller textual units that can later be used by the chunking and embedding stages.
+Questa cartella implementa la fase di splitting, cioè la trasformazione dei documenti normalizzati in unità testuali più piccole che possono poi essere chunkate.
 
-All splitters implement the common interface defined in `BaseSplitter`.
+File presenti:
+- `base.py`: interfaccia astratta `BaseSplitter`.
+- `factory.py`: `SplitterFactory`, usata dall'orchestrator per selezionare lo splitter dal YAML.
+- `sentence.py`: implementazione principale. Legge i documenti normalizzati, usa spaCy o un sentencizer minimale e produce `split_units`, statistiche per documento e un file JSONL opzionale in `data/processed/...`.
+- `proposition.py`: placeholder per uno split a livello di proposizione. Oggi restituisce output vuoto.
+- `__init__.py`: abilita gli import del package.
 
----
+Collegamenti:
+- input: dati normalizzati prodotti da `src/datasets/`;
+- output: struttura consumata da `src/routing/` o direttamente da `src/chunking/`;
+- persistenza: quando `save_output` è abilitato, salva in `data/processed/`.
 
-## Architecture
-
-The module is structured around three main components:
-
-- **BaseSplitter** – abstract interface for all splitting strategies.
-- **SentenceSplitter** – sentence-level segmentation of documents. it uses `en_core_web_sm` by `spacy`
-- **PropositionSplitter** – placeholder for proposition-level splitting.
-- **SplitterFactory** – factory used by the pipeline to instantiate the correct splitter.
-
-The factory pattern allows selecting the splitting strategy dynamically from the configuration file.
-
----
-
-## Base Interface
-
-All splitters must implement:
-
-```python
-split(dataset_output, config) -> dict
+Nel flusso attuale il file davvero centrale è `sentence.py`, perché `configs/experiments/base.yaml` usa `type: sentence`.
