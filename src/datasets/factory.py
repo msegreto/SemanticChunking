@@ -4,13 +4,14 @@ from typing import Dict, Type
 
 from src.datasets.base import BaseDatasetProcessor
 from src.datasets.beir import BEIRDatasetProcessor
-from src.datasets.dummy import DummyDatasetProcessor
 from src.datasets.msmarco import MSMarcoDatasetProcessor
 
 
 class DatasetFactory:
     _registry: Dict[str, Type[BaseDatasetProcessor]] = {
-        "default": DummyDatasetProcessor,
+        # `msmarco` and `msmarco-docs` both refer to the official MS MARCO
+        # document ranking collection. `beir/msmarco` is handled separately
+        # by the generic BEIR processor below.
         "msmarco-docs": MSMarcoDatasetProcessor,
         "msmarco": MSMarcoDatasetProcessor,
     }
