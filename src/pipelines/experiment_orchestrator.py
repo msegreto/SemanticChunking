@@ -113,7 +113,11 @@ class ExperimentOrchestrator:
         return router.route(split_output, router_cfg)
 
     def _run_chunking(self, routed_output: Any) -> Any:
-        chunking_cfg = self.config["chunking"]
+        chunking_cfg = dict(self.config["chunking"])
+        if self.config_path is not None:
+            chunking_cfg.setdefault("yaml_name", self.config_path.name)
+        else:
+            chunking_cfg.setdefault("yaml_name", self.config.get("experiment_name"))
         chunking_type = chunking_cfg["type"]
 
         print(f"[INFO] Running chunking: {chunking_type}")
