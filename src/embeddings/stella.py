@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from src.embeddings.base import BaseEmbedder, EmbeddingResult, normalize_items
+from src.embeddings.base import (
+    BaseEmbedder,
+    build_embedding_output,
+    normalize_items,
+    validate_embedder_config,
+)
 
 
 class StellaEmbedder(BaseEmbedder):
@@ -20,14 +25,15 @@ class StellaEmbedder(BaseEmbedder):
             )
         return self._model
 
-    def embed(self, data: Any, config: dict) -> EmbeddingResult:
+    def embed(self, data: Any, config: dict) -> dict[str, Any]:
         items = normalize_items(data)
         texts: List[str] = [item.text for item in items]
 
-        batch_size = config.get("batch_size", 8)
-        normalize_embeddings = config.get("normalize_embeddings", True)
-        show_progress_bar = config.get("show_progress_bar", False)
-        convert_to_numpy = config.get("convert_to_numpy", True)
+        validated_config = validate_embedder_config(config)
+        batch_size = validated_config["batch_size"]
+        normalize_embeddings = validated_config["normalize_embeddings"]
+        show_progress_bar = validated_config["show_progress_bar"]
+        convert_to_numpy = validated_config["convert_to_numpy"]
 
         model = self._load_model()
 
@@ -44,14 +50,19 @@ class StellaEmbedder(BaseEmbedder):
             normalize_embeddings=normalize_embeddings,
         )
 
-        return {
-            "embeddings": embeddings,
-            "items": items,
-            "metadata": {
+        embedding_dim = int(embeddings.shape[1]) if len(items) > 0 else 0
+
+        return build_embedding_output(
+            embeddings=embeddings,
+            items=items,
+            metadata={
                 "embedder": "stella",
                 "model_name": self.MODEL_NAME,
                 "num_items": len(items),
                 "batch_size": batch_size,
                 "normalize_embeddings": normalize_embeddings,
+                "show_progress_bar": show_progress_bar,
+                "convert_to_numpy": convert_to_numpy,
+                "embedding_dim": embedding_dim,
             },
-        }
+        )

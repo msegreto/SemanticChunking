@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,10 +59,15 @@ class ExperimentOrchestrator:
         intrinsic_output = self._run_intrinsic_evaluation(chunk_output)
         self.artifacts.intrinsic_output = intrinsic_output
 
-        embedding_output = self._run_embedding(chunk_output)
-        self.artifacts.embedding_output = embedding_output
+        index_output = self._find_reusable_index(chunk_output)
+        if index_output is not None:
+            embedding_output = None
+        else:
+            embedding_output = self._run_embedding(chunk_output)
+            self.artifacts.embedding_output = embedding_output
+            index_output = self._run_indexing(embedding_output)
 
-        index_output = self._run_indexing(embedding_output)
+        self.artifacts.embedding_output = embedding_output
         self.artifacts.index_output = index_output
 
         self._run_extrinsic_evaluation(
@@ -148,6 +154,139 @@ class ExperimentOrchestrator:
 
         retriever = RetrieverFactory.create(retriever_name)
         return retriever.build_index(embedding_output, retrieval_cfg, self.config)
+
+    def _find_reusable_index(self, chunk_output: Any) -> Optional[Dict[str, Any]]:
+        retrieval_cfg = self.config.get("retrieval", {})
+        if not retrieval_cfg.get("enabled", True):
+            return None
+
+        output_dir = self._resolve_retrieval_output_dir(retrieval_cfg)
+        manifest_path = output_dir / "manifest.json"
+        metadata_path = output_dir / "metadata.pkl"
+
+        if not manifest_path.exists() or not metadata_path.exists():
+            return None
+
+        try:
+            with manifest_path.open("r", encoding="utf-8") as f:
+                manifest = json.load(f)
+        except Exception as e:
+            print(f"[INFO] Existing index manifest is unreadable, rebuilding index: {e}")
+            return None
+
+        if not isinstance(manifest, dict):
+            print("[INFO] Existing index manifest is invalid, rebuilding index.")
+            return None
+
+        expected_num_items = self._count_chunk_items(chunk_output)
+        if not self._manifest_matches_current_config(
+            manifest=manifest,
+            metadata_path=metadata_path,
+            expected_num_items=expected_num_items,
+        ):
+            return None
+
+        index_path = manifest.get("index_path")
+        if not isinstance(index_path, str) or not index_path:
+            print("[INFO] Existing index manifest is missing 'index_path', rebuilding index.")
+            return None
+
+        index_path_obj = Path(index_path)
+        if not index_path_obj.exists():
+            print(f"[INFO] Existing index file not found at {index_path_obj}, rebuilding index.")
+            return None
+
+        print(f"[INFO] Index shortcut activated: reusing existing index at {index_path_obj}")
+        return {
+            "index_path": str(index_path_obj),
+            "metadata_path": str(metadata_path),
+            "manifest_path": str(manifest_path),
+            "num_vectors": manifest.get("num_vectors"),
+            "dimension": manifest.get("dimension"),
+            "distance": manifest.get("distance"),
+        }
+
+    def _resolve_retrieval_output_dir(self, retrieval_cfg: Dict[str, Any]) -> Path:
+        dataset_name = self.config["dataset"]["name"]
+        chunking_type = self.config["chunking"]["type"]
+        embedder_name = self.config["embedding"]["name"]
+        output_dir = retrieval_cfg.get(
+            "output_dir",
+            f"data/indexes/{dataset_name}/{chunking_type}/{embedder_name}",
+        )
+        return Path(output_dir)
+
+    def _manifest_matches_current_config(
+        self,
+        *,
+        manifest: Dict[str, Any],
+        metadata_path: Path,
+        expected_num_items: int,
+    ) -> bool:
+        if manifest.get("schema_version") != 1:
+            print("[INFO] Existing index manifest schema mismatch, rebuilding index.")
+            return False
+
+        retrieval_cfg = self.config.get("retrieval", {})
+
+        expected_pairs = {
+            "retriever": retrieval_cfg.get("name", "faiss"),
+            "dataset": self.config["dataset"]["name"],
+            "chunking": self.config["chunking"]["type"],
+            "embedder": self.config["embedding"]["name"],
+            "distance": retrieval_cfg.get("distance", "cosine").lower(),
+            "normalize": retrieval_cfg.get("normalize", True),
+            "num_items": expected_num_items,
+        }
+
+        for key, expected_value in expected_pairs.items():
+            actual_value = manifest.get(key)
+            if actual_value != expected_value:
+                print(
+                    "[INFO] Existing index manifest mismatch on "
+                    f"{key}: expected={expected_value!r}, found={actual_value!r}. Rebuilding index."
+                )
+                return False
+
+        try:
+            import pickle
+
+            with metadata_path.open("rb") as f:
+                metadata_blob = pickle.load(f)
+        except Exception as e:
+            print(f"[INFO] Existing index metadata is unreadable, rebuilding index: {e}")
+            return False
+
+        if not isinstance(metadata_blob, dict):
+            print("[INFO] Existing index metadata is invalid, rebuilding index.")
+            return False
+
+        items = metadata_blob.get("items")
+        if not isinstance(items, list):
+            print("[INFO] Existing index metadata is missing a valid items list, rebuilding index.")
+            return False
+
+        if len(items) != expected_num_items:
+            print(
+                "[INFO] Existing index metadata item count mismatch, "
+                f"expected={expected_num_items}, found={len(items)}. Rebuilding index."
+            )
+            return False
+
+        return True
+
+    @staticmethod
+    def _count_chunk_items(chunk_output: Any) -> int:
+        if isinstance(chunk_output, dict):
+            chunks = chunk_output.get("chunks", [])
+            if not isinstance(chunks, list):
+                raise TypeError("chunk_output['chunks'] must be a list.")
+            return len(chunks)
+
+        if isinstance(chunk_output, list):
+            return len(chunk_output)
+
+        raise TypeError("chunk_output must be either a dict with 'chunks' or a list.")
 
     def _run_extrinsic_evaluation(self, chunk_output: Any, embedding_output: Any, index_output: Any) -> None:
         eval_cfg = self.config.get("evaluation", {})

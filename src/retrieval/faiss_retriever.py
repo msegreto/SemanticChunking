@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 
 import numpy as np
 
+from src.embeddings.base import validate_embedding_output
 from src.retrieval.base import BaseRetriever
 
 
@@ -23,15 +24,10 @@ class FAISSRetriever(BaseRetriever):
                 "faiss is not installed. Install faiss-cpu or faiss-gpu before running retrieval indexing."
             ) from e
 
-        if not isinstance(embedding_output, dict):
-            raise TypeError("embedding_output must be a dict.")
-
-        embeddings = embedding_output.get("embeddings")
-        items = embedding_output.get("items", [])
-        emb_metadata = embedding_output.get("metadata", {})
-
-        if embeddings is None:
-            raise ValueError("embedding_output does not contain 'embeddings'.")
+        validated_output = validate_embedding_output(embedding_output)
+        embeddings = validated_output["embeddings"]
+        items = validated_output["items"]
+        emb_metadata = validated_output["metadata"]
 
         vectors = np.asarray(embeddings, dtype=np.float32)
         if vectors.ndim != 2:
@@ -96,16 +92,20 @@ class FAISSRetriever(BaseRetriever):
             )
 
         manifest = {
+            "schema_version": 1,
             "retriever": "faiss",
             "dataset": dataset_name,
             "chunking": chunking_type,
             "embedder": embedder_name,
+            "model_name": emb_metadata.get("model_name"),
             "index_path": str(index_path),
             "metadata_path": str(metadata_path),
+            "manifest_path": str(manifest_path),
             "distance": distance,
             "normalize": normalize,
             "num_vectors": int(vectors.shape[0]),
             "dimension": int(vectors.shape[1]),
+            "num_items": len(items),
         }
 
         with manifest_path.open("w", encoding="utf-8") as f:
