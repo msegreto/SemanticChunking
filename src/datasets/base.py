@@ -30,6 +30,14 @@ class BaseDatasetProcessor(ABC):
     NORMALIZED_SCHEMA_VERSION = "1.0"
 
     def process(self, config: dict) -> Any:
+        normalized_data = self.try_load_reusable_normalized(config)
+        if normalized_data is not None:
+            return normalized_data
+
+        data = self.build_from_raw(config)
+        return self.finalize_raw_data(data, config)
+
+    def try_load_reusable_normalized(self, config: dict) -> dict[str, Any] | None:
         split = self.get_split(config)
         normalized_dir = self.resolve_normalized_dir(config)
         normalized_data = self._try_load_normalized(config=config, normalized_dir=normalized_dir, split=split)
@@ -37,9 +45,18 @@ class BaseDatasetProcessor(ABC):
         if normalized_data is not None:
             return normalized_data
 
+        return None
+
+    def build_from_raw(self, config: dict) -> dict[str, Any]:
         raw_path = self.ensure_available(config)
         data = self.load_raw(raw_path=raw_path, config=config)
         self.validate_dataset_payload(data, context="raw load")
+        return data
+
+    def finalize_raw_data(self, data: dict[str, Any], config: dict) -> dict[str, Any]:
+        split = self.get_split(config)
+        normalized_dir = self.resolve_normalized_dir(config)
+        raw_path = self.resolve_raw_dir(config)
 
         data.setdefault("metadata", {})
         data["metadata"].update(

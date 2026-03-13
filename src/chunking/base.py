@@ -18,6 +18,16 @@ class BaseChunker(ABC):
     }
 
     def chunk(self, routed_output: Any, config: dict) -> Any:
+        prepared = self.prepare_chunking_inputs(routed_output, config)
+        cached_output = self.try_load_reusable_output(prepared)
+        if cached_output is not None:
+            return cached_output
+
+        chunk_output = self.compute_chunk_output(prepared)
+        self.save_output(chunk_output, prepared)
+        return chunk_output
+
+    def prepare_chunking_inputs(self, routed_output: Any, config: dict) -> dict[str, Any]:
         validated_config = self.validate_config(config)
         split_units = self.validate_routed_output(routed_output)
 
@@ -27,37 +37,49 @@ class BaseChunker(ABC):
             yaml_name=validated_config["yaml_name"],
         )
 
+        return {
+            "config": validated_config,
+            "split_units": split_units,
+            "grouped_units": grouped_units,
+            "run_dir": run_dir,
+        }
+
+    def try_load_reusable_output(self, prepared: dict[str, Any]) -> dict[str, Any] | None:
         cached_run = self.load_cached_run(
-            run_dir=run_dir,
-            grouped_units=grouped_units,
-            config=validated_config,
+            run_dir=prepared["run_dir"],
+            grouped_units=prepared["grouped_units"],
+            config=prepared["config"],
         )
         if cached_run is not None:
             all_chunks, documents = cached_run
             return self.build_chunk_output(
                 all_chunks=all_chunks,
                 documents=documents,
-                config=validated_config,
-                run_dir=run_dir,
+                config=prepared["config"],
+                run_dir=prepared["run_dir"],
                 reused_existing_chunks=True,
             )
 
-        all_chunks, documents = self.chunk_grouped_units(grouped_units, validated_config)
+        return None
 
-        if validated_config["save_chunks"]:
-            self.save_run_chunks(
-                run_dir=run_dir,
-                grouped_chunks=all_chunks,
-                config=validated_config,
-            )
+    def compute_chunk_output(self, prepared: dict[str, Any]) -> dict[str, Any]:
+        all_chunks, documents = self.chunk_grouped_units(prepared["grouped_units"], prepared["config"])
 
         return self.build_chunk_output(
             all_chunks=all_chunks,
             documents=documents,
-            config=validated_config,
-            run_dir=run_dir,
+            config=prepared["config"],
+            run_dir=prepared["run_dir"],
             reused_existing_chunks=False,
         )
+
+    def save_output(self, chunk_output: dict[str, Any], prepared: dict[str, Any]) -> None:
+        if prepared["config"]["save_chunks"]:
+            self.save_run_chunks(
+                run_dir=prepared["run_dir"],
+                grouped_chunks=chunk_output["chunks"],
+                config=prepared["config"],
+            )
 
     def validate_config(self, config: Any) -> dict[str, Any]:
         if not isinstance(config, dict):

@@ -84,7 +84,21 @@ class ExperimentOrchestrator:
 
         print(f"[INFO] Processing dataset: {dataset_name}")
         processor = DatasetFactory.create(dataset_name)
-        return processor.process(dataset_cfg)
+        if self._should_force_rebuild("dataset"):
+            print("[INFO] Dataset reuse disabled by execution policy: rebuilding from raw.")
+            data = processor.build_from_raw(dataset_cfg)
+            return processor.finalize_raw_data(data, dataset_cfg)
+
+        if self._should_allow_reuse("dataset"):
+            reusable_output = processor.try_load_reusable_normalized(dataset_cfg)
+            if reusable_output is not None:
+                print("[INFO] Dataset shortcut activated: reusing normalized dataset.")
+                return reusable_output
+        else:
+            print("[INFO] Dataset reuse disabled by execution policy: skipping normalized shortcut.")
+
+        data = processor.build_from_raw(dataset_cfg)
+        return processor.finalize_raw_data(data, dataset_cfg)
 
     def _run_split(self, dataset_output: Any) -> Any:
         split_cfg = self.config["split"]
@@ -92,7 +106,22 @@ class ExperimentOrchestrator:
 
         print(f"[INFO] Running split: {split_type}")
         splitter = SplitterFactory.create(split_type)
-        return splitter.split(dataset_output, split_cfg)
+        if self._should_force_rebuild("split"):
+            print("[INFO] Split reuse disabled by execution policy: recomputing split.")
+            split_output = splitter.split(dataset_output, split_cfg)
+            splitter.save_output(split_output, split_cfg)
+            return split_output
+
+        if self._should_allow_reuse("split"):
+            reusable_output = splitter.try_load_reusable_output(dataset_output, split_cfg)
+            if reusable_output is not None:
+                return reusable_output
+        else:
+            print("[INFO] Split reuse disabled by execution policy: skipping saved split shortcut.")
+
+        split_output = splitter.split(dataset_output, split_cfg)
+        splitter.save_output(split_output, split_cfg)
+        return split_output
 
     def _run_router_if_needed(self, split_output: Any) -> Any:
         split_type = self.config["split"]["type"]
@@ -122,7 +151,27 @@ class ExperimentOrchestrator:
 
         print(f"[INFO] Running chunking: {chunking_type}")
         chunker = ChunkerFactory.create(chunking_type)
-        return chunker.chunk(routed_output, chunking_cfg)
+        if not hasattr(chunker, "prepare_chunking_inputs"):
+            return chunker.chunk(routed_output, chunking_cfg)
+
+        prepared = chunker.prepare_chunking_inputs(routed_output, chunking_cfg)
+
+        if self._should_force_rebuild("chunking"):
+            print("[INFO] Chunk reuse disabled by execution policy: recomputing chunks.")
+            chunk_output = chunker.compute_chunk_output(prepared)
+            chunker.save_output(chunk_output, prepared)
+            return chunk_output
+
+        if self._should_allow_reuse("chunking"):
+            reusable_output = chunker.try_load_reusable_output(prepared)
+            if reusable_output is not None:
+                return reusable_output
+        else:
+            print("[INFO] Chunk reuse disabled by execution policy: skipping chunk cache shortcut.")
+
+        chunk_output = chunker.compute_chunk_output(prepared)
+        chunker.save_output(chunk_output, prepared)
+        return chunk_output
 
     def _run_intrinsic_evaluation(self, chunk_output: Any) -> Any:
         eval_cfg = self.config.get("evaluation", {})
@@ -162,6 +211,12 @@ class ExperimentOrchestrator:
     def _find_reusable_index(self, chunk_output: Any) -> Optional[Dict[str, Any]]:
         retrieval_cfg = self.config.get("retrieval", {})
         if not retrieval_cfg.get("enabled", True):
+            return None
+        if self._should_force_rebuild("retrieval"):
+            print("[INFO] Retrieval reuse disabled by execution policy: rebuilding index.")
+            return None
+        if not self._should_allow_reuse("retrieval"):
+            print("[INFO] Retrieval reuse disabled by execution policy: skipping index shortcut.")
             return None
 
         output_dir = self._resolve_retrieval_output_dir(retrieval_cfg)
@@ -278,6 +333,37 @@ class ExperimentOrchestrator:
             return False
 
         return True
+
+    def _execution_section(self) -> Dict[str, Any]:
+        execution = self.config.get("execution", {})
+        return execution if isinstance(execution, dict) else {}
+
+    def _stage_execution_config(self, stage_name: str) -> Dict[str, Any]:
+        execution = self._execution_section()
+        stages = execution.get("stages", {})
+        if not isinstance(stages, dict):
+            return {}
+        stage_cfg = stages.get(stage_name, {})
+        return stage_cfg if isinstance(stage_cfg, dict) else {}
+
+    def _should_force_rebuild(self, stage_name: str) -> bool:
+        stage_cfg = self._stage_execution_config(stage_name)
+        if "force_rebuild" in stage_cfg:
+            return bool(stage_cfg.get("force_rebuild"))
+
+        execution = self._execution_section()
+        return bool(execution.get("force_rebuild", False))
+
+    def _should_allow_reuse(self, stage_name: str) -> bool:
+        if self._should_force_rebuild(stage_name):
+            return False
+
+        stage_cfg = self._stage_execution_config(stage_name)
+        if "allow_reuse" in stage_cfg:
+            return bool(stage_cfg.get("allow_reuse"))
+
+        execution = self._execution_section()
+        return bool(execution.get("allow_reuse", True))
 
     @staticmethod
     def _count_chunk_items(chunk_output: Any) -> int:

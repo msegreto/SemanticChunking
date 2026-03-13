@@ -15,41 +15,12 @@ class SentenceSplitter(BaseSplitter):
         self._nlp_cache = {}
 
     def split(self, dataset_output: Dict[str, Any], config: dict) -> Dict[str, Any]:
-
         print(f"[SPLIT] sentence split with config={config}")
 
         model_name = config.get("model", "en_core_web_sm")
-        save_output = config.get("save_output", False)
-        output_path = config.get("output_path")
-
         metadata = dataset_output["metadata"]
-
-        documents_path = (
-            Path(metadata["normalized_path"])
-            / metadata["normalized_files"]["documents"]
-        )
-
-        output_file = Path(output_path) if output_path else None
-
-        # Fast path: riusa split già salvato se presente
-        if save_output and output_file and output_file.exists() and output_file.stat().st_size > 0:
-            print(f"[SPLIT] reusing existing sentence split from {output_file}")
-            split_units = self._load_existing_split(output_file)
-            doc_stats = self._build_doc_stats(split_units)
-
-            return {
-                "split_units": split_units,
-                "documents": doc_stats,
-                "metadata": {
-                    "split_type": "sentence",
-                    "spacy_model": model_name,
-                    "num_documents": len(doc_stats),
-                    "num_units": len(split_units),
-                    "source_metadata": metadata,
-                    "reused_existing_split": True,
-                    "split_path": str(output_file),
-                },
-            }
+        documents_path = Path(metadata["normalized_path"]) / metadata["normalized_files"]["documents"]
+        output_file = self.resolve_output_path(config)
 
         nlp = self._load_spacy_model(model_name)
 
@@ -105,13 +76,58 @@ class SentenceSplitter(BaseSplitter):
                     }
                 )
 
-        if save_output and output_file:
-            output_file.parent.mkdir(parents=True, exist_ok=True)
+        return self._build_split_output(
+            split_units=split_units,
+            doc_stats=doc_stats,
+            metadata=metadata,
+            model_name=model_name,
+            output_file=output_file,
+            reused_existing_split=False,
+        )
 
-            with open(output_file, "w", encoding="utf-8") as f:
-                for item in split_units:
-                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
+    def try_load_reusable_output(self, dataset_output: Dict[str, Any], config: dict) -> Dict[str, Any] | None:
+        save_output = config.get("save_output", False)
+        output_file = self.resolve_output_path(config)
+        if not save_output or output_file is None:
+            return None
+        if not output_file.exists() or output_file.stat().st_size <= 0:
+            return None
 
+        print(f"[SPLIT] reusing existing sentence split from {output_file}")
+        split_units = self._load_existing_split(output_file)
+        return self._build_split_output(
+            split_units=split_units,
+            doc_stats=None,
+            metadata=dataset_output["metadata"],
+            model_name=config.get("model", "en_core_web_sm"),
+            output_file=output_file,
+            reused_existing_split=True,
+        )
+
+    def save_output(self, split_output: Dict[str, Any], config: dict) -> None:
+        save_output = config.get("save_output", False)
+        output_file = self.resolve_output_path(config)
+        if not save_output or output_file is None:
+            return
+
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        split_units = split_output.get("split_units", [])
+        with open(output_file, "w", encoding="utf-8") as f:
+            for item in split_units:
+                f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+    def _build_split_output(
+        self,
+        *,
+        split_units: List[Dict[str, Any]],
+        doc_stats: List[Dict[str, Any]] | None,
+        metadata: Dict[str, Any],
+        model_name: str,
+        output_file: Path | None,
+        reused_existing_split: bool,
+    ) -> Dict[str, Any]:
+        if doc_stats is None:
+            doc_stats = self._build_doc_stats(split_units)
         return {
             "split_units": split_units,
             "documents": doc_stats,
@@ -121,7 +137,7 @@ class SentenceSplitter(BaseSplitter):
                 "num_documents": len(doc_stats),
                 "num_units": len(split_units),
                 "source_metadata": metadata,
-                "reused_existing_split": False,
+                "reused_existing_split": reused_existing_split,
                 "split_path": str(output_file) if output_file else None,
             },
         }
