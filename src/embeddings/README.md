@@ -4,6 +4,7 @@ Questa cartella genera embedding testuali a partire da chunk, frasi o altre unit
 
 File presenti:
 - `base.py`: definisce `BaseEmbedder`, `EmbeddingItem` e le funzioni comuni di validazione/normalizzazione (`normalize_items(...)`, `validate_embedder_config(...)`, `validate_embedding_output(...)`).
+- `sentence_transformer_base.py`: base class condivisa per gli embedder basati su `SentenceTransformer`; espone anche un livello piu' basso riusabile via `encode_texts(...)`.
 - `factory.py`: `EmbedderFactory`, usata dall'orchestrator per selezionare il modello dal YAML.
 - `mpnet.py`: embedder basato su `sentence-transformers/all-mpnet-base-v2`.
 - `bge.py`: embedder basato su `BAAI/bge-large-en-v1.5`.
@@ -14,5 +15,9 @@ Come si collega al resto del progetto:
 - input principale: chunk prodotti da `src/chunking/`;
 - output: un `dict[str, Any]` validato con `embeddings`, `items` e `metadata`, consumato da `src/retrieval/` per costruire l'indice;
 - riuso indiretto: l'extrinsic evaluation richiama di nuovo l'embedder per codificare le query.
+
+Nota architetturale:
+
+gli embedder possono ora essere riusati anche a un livello piu' basso tramite `encode_texts(...)` / `encode_items(...)`. Questo serve soprattutto al semantic chunking, dove bisogna embeddare sentence o split units prima che esistano i chunk finali.
 
 Questa cartella è il punto in cui i chunk testuali diventano vettori numerici utilizzabili dal retrieval.

@@ -9,3 +9,5 @@ tqdm>=4.66
 pytest>=8.0
 huggingface_hub
 ir_datasets
+langchain-experimental>=0.4.1
+langchain-huggingface>=1.2.1

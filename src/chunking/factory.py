@@ -4,6 +4,8 @@ from typing import Dict, Type
 
 from src.chunking.base import BaseChunker
 from src.chunking.fixed import FixedChunker
+from src.chunking.semantic_breakpoint import SemanticBreakpointChunker
+from src.chunking.semantic_clustering import SemanticClusteringChunker
 from src.chunking.semantic import SemanticChunker
 
 
@@ -11,6 +13,8 @@ class ChunkerFactory:
     _registry: Dict[str, Type[BaseChunker]] = {
         "fixed": FixedChunker,
         "semantic": SemanticChunker,
+        "semantic_breakpoint": SemanticBreakpointChunker,
+        "semantic_clustering": SemanticClusteringChunker,
     }
 
     @classmethod

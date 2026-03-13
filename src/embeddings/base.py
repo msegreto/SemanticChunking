@@ -217,6 +217,29 @@ def validate_embedding_output(output: Any) -> dict[str, Any]:
 
 
 class BaseEmbedder(ABC):
+    def encode_texts(self, texts: list[str], config: dict) -> tuple[Any, dict[str, Any]]:
+        """
+        API opzionale per riusare l'encoder a livello piu' basso.
+
+        Serve ai casi in cui si vogliono vettorizzare testi senza costruire
+        l'intero embedding output della fase retrieval.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement encode_texts()."
+        )
+
+    def encode_items(
+        self,
+        items: list[EmbeddingItem],
+        config: dict,
+    ) -> tuple[Any, list[EmbeddingItem], dict[str, Any]]:
+        """
+        API opzionale per codificare elementi gia' normalizzati.
+        """
+        texts = [item.text for item in items]
+        embeddings, metadata = self.encode_texts(texts, config)
+        return embeddings, items, metadata
+
     @abstractmethod
     def embed(self, data: Any, config: dict) -> dict[str, Any]:
         """

@@ -12,7 +12,7 @@ Come si collega al resto del progetto:
 - sezione `dataset`: viene consumata dai processor in `src/datasets/`;
 - sezione `split`: seleziona uno splitter in `src/splitting/`;
 - sezione `router`: controlla il routing in `src/routing/`;
-- sezione `chunking`: seleziona la strategia in `src/chunking/`;
+- sezione `chunking`: seleziona la strategia in `src/chunking/`; per i metodi semantici in riproduzione usare type espliciti come `semantic_breakpoint` e `semantic_clustering`, non `semantic`;
 - sezione `embedding`: sceglie il modello in `src/embeddings/`;
 - sezione `retrieval`: guida la costruzione indice in `src/retrieval/`;
 - sezione `evaluation`: guida `src/evaluation/intrinsic/` e `scripts/run_extrinsic_eval.py`.
