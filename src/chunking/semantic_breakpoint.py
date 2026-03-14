@@ -7,7 +7,7 @@ from langchain_experimental.text_splitter import (
     BREAKPOINT_DEFAULTS,
     SemanticChunker as LangChainSemanticChunker,
 )
-from langchain_huggingface import HuggingFaceEmbeddings
+from tqdm.auto import tqdm
 
 from src.chunking.semantic_base import BaseSemanticChunker
 from src.chunking.semantic_utils import SUPPORTED_BREAKPOINT_THRESHOLD_TYPES
@@ -16,7 +16,7 @@ from src.chunking.semantic_utils import SUPPORTED_BREAKPOINT_THRESHOLD_TYPES
 class SemanticBreakpointChunker(BaseSemanticChunker):
     def __init__(self) -> None:
         super().__init__()
-        self._langchain_embeddings: HuggingFaceEmbeddings | None = None
+        self._langchain_embeddings: Any = None
         self._langchain_embeddings_key: tuple[Any, ...] | None = None
         self._langchain_chunker: LangChainSemanticChunker | None = None
         self._langchain_chunker_key: tuple[Any, ...] | None = None
@@ -121,8 +121,14 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         all_chunks: list[dict[str, Any]] = []
         grouped_chunks: list[tuple[str, list[dict[str, Any]]]] = []
+        progress = tqdm(
+            grouped_units.items(),
+            total=len(grouped_units),
+            desc=f"Semantic chunking ({config['embedding_model']})",
+            unit="doc",
+        )
 
-        for doc_id, units in grouped_units.items():
+        for doc_id, units in progress:
             ordered_units = self.ordered_units(units)
             chunks = self._build_breakpoint_chunks(
                 doc_id=doc_id,
@@ -272,8 +278,6 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
     def _get_langchain_chunker(self, config: dict[str, Any]) -> LangChainSemanticChunker:
         key = (
             config["embedding_model"],
-            json.dumps(config["embedding_model_kwargs"], sort_keys=True),
-            json.dumps(config["embedding_encode_kwargs"], sort_keys=True),
             config["embedding_batch_size"],
             config["threshold_type"],
             config["threshold_value"],
@@ -296,25 +300,23 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
             self._langchain_chunker_key = key
         return self._langchain_chunker
 
-    def _get_langchain_embeddings(self, config: dict[str, Any]) -> HuggingFaceEmbeddings:
+    def _get_langchain_embeddings(self, config: dict[str, Any]) -> Any:
         key = (
             config["embedding_model"],
-            json.dumps(config["embedding_model_kwargs"], sort_keys=True),
             json.dumps(config["embedding_encode_kwargs"], sort_keys=True),
             config["embedding_batch_size"],
         )
         if self._langchain_embeddings is None or self._langchain_embeddings_key != key:
-            encode_kwargs = {
+            embedder = self.get_semantic_embedder(config)
+            adapter_config = {
                 "batch_size": config["embedding_batch_size"],
                 "normalize_embeddings": True,
+                "show_progress_bar": False,
+                "convert_to_numpy": True,
+                "log_embedding_calls": False,
                 **config["embedding_encode_kwargs"],
             }
-            self._langchain_embeddings = HuggingFaceEmbeddings(
-                model_name=config["embedding_model"],
-                model_kwargs=dict(config["embedding_model_kwargs"]),
-                encode_kwargs=encode_kwargs,
-                show_progress=False,
-            )
+            self._langchain_embeddings = embedder.as_langchain_embeddings(adapter_config)
             self._langchain_embeddings_key = key
         return self._langchain_embeddings
 

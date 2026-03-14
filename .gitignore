@@ -9,7 +9,6 @@ venv/
 # Data artifacts
 data/raw/*
 data/processed/*
-data/splits/*
 data/chunks/*
 data/embeddings/*
 data/indexes/*
@@ -23,13 +22,6 @@ data/normalized/*
 !data/embeddings/.gitkeep
 !data/indexes/.gitkeep
 
-# Results
-results/intrinsic/*
-results/retrieval/*
-results/generation/*
-results/ablations/*
-results/logs/*
-
 !results/intrinsic/.gitkeep
 !results/retrieval/.gitkeep
 !results/generation/.gitkeep
@@ -40,8 +32,4 @@ results/logs/*
 TODO.md
 .hf_cache/
 docs/
-
-#Codex
-AGENTS.md
 reports/
-checklist.md

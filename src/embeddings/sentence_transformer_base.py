@@ -3,6 +3,8 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any
 
+import numpy as np
+
 from src.embeddings.base import (
     BaseEmbedder,
     EmbeddingItem,
@@ -10,6 +12,19 @@ from src.embeddings.base import (
     normalize_items,
     validate_embedder_config,
 )
+
+
+class _LangChainSentenceTransformerAdapter:
+    def __init__(self, embedder: "SentenceTransformerEmbedder", config: dict[str, Any]) -> None:
+        self._embedder = embedder
+        self._config = dict(config)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        embeddings, _ = self._embedder.encode_texts(texts, self._config)
+        return np.asarray(embeddings, dtype=float).tolist()
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed_documents([text])[0]
 
 
 class SentenceTransformerEmbedder(BaseEmbedder):
@@ -54,13 +69,15 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         normalize_embeddings = validated_config["normalize_embeddings"]
         show_progress_bar = validated_config["show_progress_bar"]
         convert_to_numpy = validated_config["convert_to_numpy"]
+        log_embedding_calls = validated_config["log_embedding_calls"]
 
         model = self._load_model()
 
-        print(
-            f"[EMBEDDING] {self.EMBEDDER_NAME} embedder with model={self.MODEL_NAME}, "
-            f"batch_size={batch_size}, items={len(prepared_texts)}"
-        )
+        if log_embedding_calls:
+            print(
+                f"[EMBEDDING] {self.EMBEDDER_NAME} embedder with model={self.MODEL_NAME}, "
+                f"batch_size={batch_size}, items={len(prepared_texts)}"
+            )
 
         embeddings = model.encode(
             prepared_texts,
@@ -92,6 +109,9 @@ class SentenceTransformerEmbedder(BaseEmbedder):
     ) -> tuple[Any, list[EmbeddingItem], dict[str, Any]]:
         embeddings, metadata = self.encode_texts([item.text for item in items], config)
         return embeddings, items, metadata
+
+    def as_langchain_embeddings(self, config: dict[str, Any]) -> Any:
+        return _LangChainSentenceTransformerAdapter(self, config)
 
     def embed(self, data: Any, config: dict) -> dict[str, Any]:
         items = normalize_items(data)

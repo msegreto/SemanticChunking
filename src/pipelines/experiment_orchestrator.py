@@ -143,6 +143,9 @@ class ExperimentOrchestrator:
 
     def _run_chunking(self, routed_output: Any) -> Any:
         chunking_cfg = dict(self.config["chunking"])
+        embedding_cfg = self.config.get("embedding", {})
+        if isinstance(embedding_cfg.get("name"), str) and embedding_cfg["name"].strip():
+            chunking_cfg.setdefault("embedding_model", embedding_cfg["name"].strip())
         if self.config_path is not None:
             chunking_cfg.setdefault("yaml_name", self.config_path.name)
         else:

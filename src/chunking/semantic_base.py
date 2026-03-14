@@ -78,6 +78,7 @@ class BaseSemanticChunker(BaseChunker):
             "normalize_embeddings": True,
             "show_progress_bar": False,
             "convert_to_numpy": True,
+            "log_embedding_calls": False,
         }
 
     def encode_semantic_texts(

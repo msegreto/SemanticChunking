@@ -28,7 +28,7 @@ chunking:
   save_chunks: false
 
 embedding:
-  name: "all-mpnet-base-v2"
+  name: "mpnet"
   batch_size: 32
   normalize_embeddings: true
   show_progress_bar: true

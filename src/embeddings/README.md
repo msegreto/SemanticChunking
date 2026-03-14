@@ -5,8 +5,8 @@ Questa cartella genera embedding testuali a partire da chunk, frasi o altre unit
 File presenti:
 - `base.py`: definisce `BaseEmbedder`, `EmbeddingItem` e le funzioni comuni di validazione/normalizzazione (`normalize_items(...)`, `validate_embedder_config(...)`, `validate_embedding_output(...)`).
 - `sentence_transformer_base.py`: base class condivisa per gli embedder basati su `SentenceTransformer`; espone anche un livello piu' basso riusabile via `encode_texts(...)`.
-- `factory.py`: `EmbedderFactory`, usata dall'orchestrator per selezionare il modello dal YAML.
-- `mpnet.py`: embedder basato su `sentence-transformers/all-mpnet-base-v2`.
+- `factory.py`: `EmbedderFactory`, usata dall'orchestrator e dai chunker semantici per selezionare l'embedder dal YAML.
+- `mpnet.py`: embedder logico `mpnet`, che incapsula il model id Hugging Face effettivo.
 - `bge.py`: embedder basato su `BAAI/bge-large-en-v1.5`.
 - `stella.py`: embedder basato su `dunzhang/stella_en_1.5B_v5`.
 - `__init__.py`: abilita gli import del package.
@@ -18,6 +18,6 @@ Come si collega al resto del progetto:
 
 Nota architetturale:
 
-gli embedder possono ora essere riusati anche a un livello piu' basso tramite `encode_texts(...)` / `encode_items(...)`. Questo serve soprattutto al semantic chunking, dove bisogna embeddare sentence o split units prima che esistano i chunk finali.
+gli embedder possono ora essere riusati anche a un livello piu' basso tramite `encode_texts(...)` / `encode_items(...)` e l'adapter `as_langchain_embeddings(...)`. Questo serve soprattutto al semantic chunking, dove bisogna embeddare sentence o split units prima che esistano i chunk finali.
 
 Questa cartella è il punto in cui i chunk testuali diventano vettori numerici utilizzabili dal retrieval.

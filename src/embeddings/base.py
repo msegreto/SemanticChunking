@@ -145,11 +145,16 @@ def validate_embedder_config(
     if not isinstance(convert_to_numpy, bool):
         raise TypeError("'convert_to_numpy' must be a boolean.")
 
+    log_embedding_calls = config.get("log_embedding_calls", True)
+    if not isinstance(log_embedding_calls, bool):
+        raise TypeError("'log_embedding_calls' must be a boolean.")
+
     validated = {
         "batch_size": batch_size,
         "normalize_embeddings": normalize_embeddings,
         "show_progress_bar": show_progress_bar,
         "convert_to_numpy": convert_to_numpy,
+        "log_embedding_calls": log_embedding_calls,
     }
 
     if allow_instruction:
@@ -226,6 +231,14 @@ class BaseEmbedder(ABC):
         """
         raise NotImplementedError(
             f"{self.__class__.__name__} does not implement encode_texts()."
+        )
+
+    def as_langchain_embeddings(self, config: dict) -> Any:
+        """
+        API opzionale per esporre l'embedder con l'interfaccia attesa da LangChain.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement as_langchain_embeddings()."
         )
 
     def encode_items(
