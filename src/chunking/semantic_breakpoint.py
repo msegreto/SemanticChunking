@@ -3,14 +3,28 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import numpy as np
 from langchain_experimental.text_splitter import (
     BREAKPOINT_DEFAULTS,
     SemanticChunker as LangChainSemanticChunker,
+    calculate_cosine_distances,
+    combine_sentences,
 )
 from tqdm.auto import tqdm
 
 from src.chunking.semantic_base import BaseSemanticChunker
 from src.chunking.semantic_utils import SUPPORTED_BREAKPOINT_THRESHOLD_TYPES
+
+
+class _PrecomputedEmbeddingsAdapter:
+    def __init__(self, texts: list[str], embeddings: np.ndarray) -> None:
+        self._texts = list(texts)
+        self._embeddings = np.asarray(embeddings, dtype=float)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if texts != self._texts:
+            raise ValueError("Precomputed embeddings do not match the requested texts.")
+        return self._embeddings.tolist()
 
 
 class SemanticBreakpointChunker(BaseSemanticChunker):
@@ -202,11 +216,11 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
                 )
             ]
 
-        sentences = [unit["text"].strip() for unit in units]
         chunker = self._get_langchain_chunker(config)
         threshold, breakpoint_scores = self._compute_langchain_breakpoints(
             chunker=chunker,
-            sentences=sentences,
+            units=units,
+            config=config,
         )
 
         chunks: list[dict[str, Any]] = []
@@ -250,15 +264,28 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
     def _compute_langchain_breakpoints(
         self,
         chunker: LangChainSemanticChunker,
-        sentences: list[str],
+        units: list[dict[str, Any]],
+        config: dict[str, Any],
     ) -> tuple[float, dict[str, Any]]:
+        sentences = [unit["text"].strip() for unit in units]
         if len(sentences) == 1:
             return float("inf"), {"breakpoint_array": [], "indices_above_threshold": []}
 
         if chunker.breakpoint_threshold_type == "gradient" and len(sentences) == 2:
             return float("inf"), {"breakpoint_array": [], "indices_above_threshold": []}
 
-        distances, _ = chunker._calculate_sentence_distances(sentences)
+        combined_sentences = combine_sentences(
+            [{"sentence": sentence, "index": idx} for idx, sentence in enumerate(sentences)],
+            chunker.buffer_size,
+        )
+        combined_texts = [item["combined_sentence"] for item in combined_sentences]
+        embeddings = self.get_cached_semantic_embeddings(units, config)
+        chunker.embeddings = _PrecomputedEmbeddingsAdapter(combined_texts, embeddings)
+
+        for idx, vector in enumerate(embeddings):
+            combined_sentences[idx]["combined_sentence_embedding"] = vector
+
+        distances, _ = calculate_cosine_distances(combined_sentences)
         if chunker.number_of_chunks is not None:
             threshold = float(chunker._threshold_from_clusters(distances))
             breakpoint_array = distances
@@ -319,6 +346,15 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
             self._langchain_embeddings = embedder.as_langchain_embeddings(adapter_config)
             self._langchain_embeddings_key = key
         return self._langchain_embeddings
+
+    def build_semantic_embedding_texts(
+        self,
+        units: list[dict[str, Any]],
+        config: dict[str, Any],
+    ) -> list[str]:
+        sentences = [{"sentence": unit["text"].strip(), "index": idx} for idx, unit in enumerate(units)]
+        combined_sentences = combine_sentences(sentences, config["buffer_size"])
+        return [item["combined_sentence"] for item in combined_sentences]
 
     def _build_chunk_from_span(
         self,
