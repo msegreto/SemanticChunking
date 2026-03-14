@@ -192,7 +192,16 @@ class ExperimentOrchestrator:
         intrinsic_name = eval_cfg.get("intrinsic_evaluator", "default")
         print(f"[INFO] Running intrinsic evaluation: {intrinsic_name}")
         evaluator = IntrinsicEvaluatorFactory.create(intrinsic_name)
-        return evaluator.evaluate(chunk_output, eval_cfg)
+        intrinsic_cfg = dict(eval_cfg)
+        intrinsic_cfg["_run_context"] = {
+            "dataset": self.config.get("dataset", {}),
+            "chunking": self.config.get("chunking", {}),
+            "router": self.config.get("router", {}),
+            "experiment_name": self.config.get("experiment_name"),
+            "experiment": self.config.get("experiment", {}),
+            "config_path": str(self.config_path) if self.config_path is not None else None,
+        }
+        return evaluator.evaluate(chunk_output, intrinsic_cfg)
 
     def _run_embedding(self, chunk_output: Any) -> Any:
         embedding_cfg = self.config["embedding"]

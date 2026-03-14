@@ -1,0 +1,23 @@
+{
+  "boundary_clarity": {
+    "mean": 0.8922032240425992,
+    "min": 0.5,
+    "max": 1.0,
+    "variance": 0.002956204311527432
+  },
+  "chunk_stickiness_complete": {
+    "mean": 1.4269091355429078,
+    "min": 0.0,
+    "max": 1.584962500721156,
+    "variance": 0.11566801410439047
+  },
+  "chunk_stickiness_incomplete": {
+    "mean": 1.324348643753845,
+    "min": 0.0,
+    "max": 1.5,
+    "variance": 0.11844769988562431
+  },
+  "metadata": {
+    "num_documents": 57600
+  }
+}

@@ -4,8 +4,8 @@ Questa cartella ospita la fase di routing, che nel disegno del framework dovrebb
 
 File presenti:
 - `base.py`: interfaccia astratta `BaseRouter`.
-- `factory.py`: `RouterFactory`, usata dall'orchestrator per creare il router richiesto in configurazione.
-- `dummy.py`: implementazione attuale. Non effettua un vero routing, ma si limita a propagare l'output aggiungendo un piccolo blocco metadata.
+- `factory.py`: `RouterFactory`, usata dall'orchestrator per creare il router richiesto in configurazione; oggi espone gli alias `default` e `moc`.
+- `dummy.py`: implementazione attuale. Non effettua un vero routing, ma propaga l'output aggiungendo `router_info`.
 - `__init__.py`: abilita gli import del package.
 
 Collegamenti:

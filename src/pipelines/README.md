@@ -13,9 +13,9 @@ Ruolo di `experiment_orchestrator.py`:
 4. applica il router, se abilitato;
 5. costruisce i chunk tramite `ChunkerFactory`;
 6. esegue la valutazione intrinsic;
-7. produce embeddings;
-8. costruisce l'indice retrieval;
-9. invoca la valutazione extrinsic tramite `scripts/run_extrinsic_eval.py`.
+7. prova a riusare un indice retrieval gia' compatibile, se presente;
+8. altrimenti produce embeddings e costruisce l'indice retrieval;
+9. invoca la valutazione extrinsic tramite `scripts/run_extrinsic_eval.py`, se la fase e' abilitata.
 
 Collegamenti con il progetto:
 - entra dal lato CLI tramite `scripts/run_pipeline.py`;

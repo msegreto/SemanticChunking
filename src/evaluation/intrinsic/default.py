@@ -83,7 +83,8 @@ class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
         return results
 
     def _save_results(self, results: Dict[str, Any], config: Dict[str, Any]) -> None:
-        save_cfg = config.get("save", {})
+        save_cfg = dict(config.get("save", {}))
+        save_cfg["_run_context"] = config.get("_run_context", {})
         save_enabled = save_cfg.get("enabled", True)
 
         if not save_enabled:
@@ -103,14 +104,50 @@ class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
 
     def _build_output_paths(self, save_cfg: Dict[str, Any]) -> Tuple[Path, Path]:
         output_dir = Path("results") / "intrinsic"
-
-        yaml_name = save_cfg.get("yaml_name")
-        if yaml_name:
-            yaml_stem = Path(yaml_name).stem
-            main_name = f"intrinsic_{yaml_stem}.json"
-            global_name = f"intrinsic_{yaml_stem}_global.json"
-        else:
-            main_name = "intrinsic_results.json"
-            global_name = "intrinsic_results_global.json"
+        filename_stem = self._build_filename_stem(save_cfg)
+        main_name = f"{filename_stem}.json"
+        global_name = f"{filename_stem}_global.json"
 
         return output_dir / main_name, output_dir / global_name
+
+    def _build_filename_stem(self, save_cfg: Dict[str, Any]) -> str:
+        run_context = save_cfg.get("_run_context", {})
+        if isinstance(run_context, dict):
+            dataset_cfg = run_context.get("dataset", {})
+            chunking_cfg = run_context.get("chunking", {})
+            router_cfg = run_context.get("router", {})
+            experiment_cfg = run_context.get("experiment", {})
+        else:
+            dataset_cfg = {}
+            chunking_cfg = {}
+            router_cfg = {}
+            experiment_cfg = {}
+
+        dataset_name = self._slugify(dataset_cfg.get("name", "unknown-dataset"))
+        chunking_name = self._slugify(chunking_cfg.get("type", "unknown-chunking"))
+
+        routing_name = "no-routing"
+        if isinstance(router_cfg, dict) and router_cfg.get("enabled", False):
+            routing_name = self._slugify(router_cfg.get("name", "default-router"))
+
+        experiment_name = self._slugify(
+            save_cfg.get("experiment_name")
+            or run_context.get("experiment_name")
+            or experiment_cfg.get("name")
+            or "intrinsic-eval"
+        )
+
+        config_path = run_context.get("config_path")
+        if config_path:
+            config_name = self._slugify(Path(str(config_path)).stem)
+        else:
+            config_name = self._slugify(save_cfg.get("yaml_name") or "default-run")
+
+        return f"{dataset_name}_{chunking_name}_{routing_name}_{experiment_name}_{config_name}"
+
+    def _slugify(self, value: Any) -> str:
+        text = str(value).replace("/", "-").strip()
+        if not text:
+            return "item"
+        safe_chars = {"-", "_", "."}
+        return "".join(ch if ch.isalnum() or ch in safe_chars else "-" for ch in text).strip("-_.") or "item"

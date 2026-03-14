@@ -10,13 +10,13 @@ File presenti:
 - `semantic_utils.py`: utility comuni per config semantica e ordinamento delle unita'.
 - `semantic_breakpoint.py`: implementazione del metodo semantic breakpoint tramite backend LangChain, adattata all'output del framework.
 - `semantic_clustering.py`: implementazione del metodo semantic clustering del paper, con supporto `single_linkage` e `dbscan`.
-- `semantic.py`: alias intenzionalmente ambiguo che fallisce con un messaggio guidato; serve a forzare l'uso di nomi espliciti.
 - `__init__.py`: abilita gli import del package.
 
 Come si collega al resto del progetto:
 - input: `split_units` prodotti da `src/splitting/` o passati attraverso `src/routing/`;
 - output: lista di chunk usata da `src/evaluation/intrinsic/`, `src/embeddings/` e indirettamente da `src/retrieval/`;
 - persistenza: `fixed.py` usa `data/chunks/<dataset>/<yaml_name>/`; se i file della run esistono già e sono compatibili, li riusa anche con `save_chunks: false`.
+- persistenza: tutti i chunker che estendono `BaseChunker` possono leggere la cache per-run in `data/chunks/<dataset>/<yaml_name>/`; la scrittura su disco avviene solo con `save_chunks: true`.
 
 Nel run baseline attuale, questa cartella è cruciale perché `fixed.py` genera i chunk su cui si basano tutte le fasi successive.
 
@@ -28,7 +28,7 @@ Questo evita collisioni nella cache e mantiene leggibili i risultati sperimental
 
 Config minima consigliata per `semantic_clustering`:
 - `clustering_mode: single_linkage` oppure `dbscan`
-- `lambda: 0.5`
+- `lambda_weight: 0.5`
 - `number_of_chunks: <int>` obbligatorio per `single_linkage`
 - `stop_distance_threshold: 0.5` per `single_linkage`
 - `dbscan_eps: 0.3` per `dbscan`
@@ -39,4 +39,6 @@ Note implementative:
 - i chunk possono contenere frasi non contigue;
 - il testo finale del chunk concatena comunque le frasi nell'ordine originale del documento;
 - per `single_linkage`, `max_chunk_size` viene derivato come `ceil(num_sentences / number_of_chunks)` per ciascun documento;
-- per `dbscan` il backend usato e' `scikit-learn` con matrice di distanza precomputata.
+- per `dbscan` il backend usato e' `scikit-learn` con matrice di distanza precomputata;
+- `semantic_breakpoint` supporta `threshold_type` compatibili con LangChain, inclusi `percentile`, `standard_deviation`, `interquartile`, `gradient`, `distance` e `gradient_absolute`;
+- i metodi semantici riusano l'embedder configurato in `chunking.embedding_model`, che l'orchestrator popola di default dalla sezione `embedding`.

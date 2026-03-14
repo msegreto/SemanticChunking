@@ -4,6 +4,8 @@ import random
 from pathlib import Path
 from typing import Any, Sequence
 
+from src.embeddings.factory import EmbedderFactory
+
 from .base import BaseExtrinsicEvaluator
 from .io import (
     load_index_metadata,
@@ -162,13 +164,10 @@ class DocumentRetrievalEvaluator(BaseExtrinsicEvaluator):
 
     @staticmethod
     def _load_embedder(embedding_cfg: dict[str, Any]):
-        embedder_name = embedding_cfg.get("name", "").lower()
-
-        if "mpnet" in embedder_name:
-            from src.embeddings.mpnet import MPNetEmbedder
-            return MPNetEmbedder()
-
-        raise ValueError(f"Unsupported embedder for extrinsic evaluation: {embedding_cfg.get('name')}")
+        embedder_name = embedding_cfg.get("name")
+        if not isinstance(embedder_name, str) or not embedder_name.strip():
+            raise ValueError("Embedding config requires a non-empty 'name' for extrinsic evaluation.")
+        return EmbedderFactory.create(embedder_name.strip())
 
     @staticmethod
     def _load_retriever(retrieval_cfg: dict[str, Any]):
@@ -186,12 +185,5 @@ class DocumentRetrievalEvaluator(BaseExtrinsicEvaluator):
 
     @staticmethod
     def _encode_queries(embedder, query_texts: list[str], embedding_cfg: dict[str, Any]):
-        model = embedder._load_model()
-
-        return model.encode(
-            query_texts,
-            batch_size=embedding_cfg.get("batch_size", 32),
-            show_progress_bar=embedding_cfg.get("show_progress_bar", False),
-            convert_to_numpy=True,
-            normalize_embeddings=embedding_cfg.get("normalize_embeddings", True),
-        )
+        query_embeddings, _ = embedder.encode_texts(query_texts, embedding_cfg)
+        return query_embeddings

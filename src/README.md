@@ -13,6 +13,5 @@ Sottocartelle principali:
 - `retrieval/`: costruzione e interrogazione degli indici.
 - `evaluation/`: metriche intrinsic ed extrinsic.
 - `pipelines/`: orchestration end-to-end.
-- `generation/` e `utils/`: spazi previsti per estensioni future.
 
-Questa cartella è il centro del progetto: gli script in `scripts/` la invocano, i file YAML in `configs/experiments/` la configurano, mentre `data/` e `results/` sono gli output persistiti delle sue esecuzioni.
+Questa cartella è il centro del progetto: gli script in `scripts/` la invocano, i file YAML in `configs/experiments/` la configurano, mentre `data/` e `results/` contengono gli artefatti persistiti delle esecuzioni.

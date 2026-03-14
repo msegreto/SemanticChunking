@@ -11,6 +11,8 @@ SUPPORTED_BREAKPOINT_THRESHOLD_TYPES = {
     "standard_deviation",
     "interquartile",
     "gradient",
+    "distance",
+    "gradient_absolute",
 }
 SUPPORTED_CLUSTERING_MODES = {
     "single_linkage",

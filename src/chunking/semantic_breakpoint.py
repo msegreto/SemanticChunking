@@ -13,7 +13,16 @@ from langchain_experimental.text_splitter import (
 from tqdm.auto import tqdm
 
 from src.chunking.semantic_base import BaseSemanticChunker
-from src.chunking.semantic_utils import SUPPORTED_BREAKPOINT_THRESHOLD_TYPES
+from src.chunking.semantic_utils import (
+    SUPPORTED_BREAKPOINT_THRESHOLD_TYPES,
+    gradient_scores,
+)
+
+
+ABSOLUTE_BREAKPOINT_DEFAULTS: dict[str, float] = {
+    "distance": 0.3,
+    "gradient_absolute": 0.1,
+}
 
 
 class _PrecomputedEmbeddingsAdapter:
@@ -69,7 +78,7 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
                 raise ValueError(
                     f"Semantic breakpoint '{threshold_type}' requires 'threshold_value' in [0, 100]."
                 )
-            if threshold_type in {"standard_deviation", "interquartile"} and threshold_value < 0.0:
+            if threshold_type in {"standard_deviation", "interquartile", "distance", "gradient_absolute"} and threshold_value < 0.0:
                 raise ValueError(
                     f"Semantic breakpoint '{threshold_type}' requires 'threshold_value' >= 0."
                 )
@@ -274,7 +283,8 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
         if len(sentences) == 1:
             return float("inf"), {"breakpoint_array": [], "indices_above_threshold": []}
 
-        if chunker.breakpoint_threshold_type == "gradient" and len(sentences) == 2:
+        threshold_type = config["threshold_type"]
+        if threshold_type in {"gradient", "gradient_absolute"} and len(sentences) == 2:
             return float("inf"), {"breakpoint_array": [], "indices_above_threshold": []}
 
         combined_sentences = combine_sentences(
@@ -289,7 +299,17 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
             combined_sentences[idx]["combined_sentence_embedding"] = vector
 
         distances, _ = calculate_cosine_distances(combined_sentences)
-        if chunker.number_of_chunks is not None:
+        if threshold_type in ABSOLUTE_BREAKPOINT_DEFAULTS:
+            threshold = float(
+                config["threshold_value"]
+                if config["threshold_value"] is not None
+                else ABSOLUTE_BREAKPOINT_DEFAULTS[threshold_type]
+            )
+            if threshold_type == "distance":
+                breakpoint_array = np.asarray(distances, dtype=float)
+            else:
+                breakpoint_array = gradient_scores(distances)
+        elif chunker.number_of_chunks is not None:
             threshold = float(chunker._threshold_from_clusters(distances))
             breakpoint_array = distances
         else:
@@ -317,12 +337,18 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
             config["min_chunk_size"],
         )
         if self._langchain_chunker is None or self._langchain_chunker_key != key:
+            langchain_threshold_type = (
+                "gradient" if config["threshold_type"] == "gradient_absolute" else config["threshold_type"]
+            )
+            langchain_threshold_value = (
+                None if config["threshold_type"] in ABSOLUTE_BREAKPOINT_DEFAULTS else config["threshold_value"]
+            )
             self._langchain_chunker = LangChainSemanticChunker(
                 embeddings=self._get_langchain_embeddings(config),
                 buffer_size=config["buffer_size"],
                 add_start_index=False,
-                breakpoint_threshold_type=config["threshold_type"],
-                breakpoint_threshold_amount=config["threshold_value"],
+                breakpoint_threshold_type=langchain_threshold_type,
+                breakpoint_threshold_amount=langchain_threshold_value,
                 number_of_chunks=config["number_of_chunks"],
                 sentence_split_regex=config["sentence_split_regex"],
                 min_chunk_size=config["min_chunk_size"],
@@ -392,7 +418,11 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
                 "threshold_value_effective": (
                     config["threshold_value"]
                     if config["threshold_value"] is not None
-                    else BREAKPOINT_DEFAULTS[config["threshold_type"]]
+                    else (
+                        ABSOLUTE_BREAKPOINT_DEFAULTS[config["threshold_type"]]
+                        if config["threshold_type"] in ABSOLUTE_BREAKPOINT_DEFAULTS
+                        else BREAKPOINT_DEFAULTS[config["threshold_type"]]
+                    )
                 ),
                 "buffer_size": config["buffer_size"],
                 "min_chunk_size": config["min_chunk_size"],
