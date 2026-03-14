@@ -7,6 +7,9 @@ __pycache__/
 venv/
 .pytest_cache/
 
+# MacOS
+.DS_Store
+
 # Data artifacts
 data/raw/*
 data/processed/*
