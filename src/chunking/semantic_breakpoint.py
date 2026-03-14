@@ -74,11 +74,14 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
                     f"Semantic breakpoint '{threshold_type}' requires 'threshold_value' >= 0."
                 )
 
-        buffer_size = config.get("buffer_size", 1)
-        if isinstance(buffer_size, bool) or not isinstance(buffer_size, int) or buffer_size < 0:
-            raise ValueError(
-                "Semantic breakpoint config requires 'buffer_size' as an integer >= 0."
-            )
+        if "buffer_size" in config:
+            raw_buffer_size = config["buffer_size"]
+            if raw_buffer_size != 0:
+                raise ValueError(
+                    "Semantic breakpoint uses fixed sentence-level embeddings: "
+                    "'buffer_size' is not configurable and must remain 0."
+                )
+        buffer_size = 0
 
         min_chunk_size = config.get("min_chunk_size")
         if min_chunk_size is not None:

@@ -9,7 +9,7 @@ File presenti:
 - `semantic_base.py`: base class condivisa per i metodi semantici, con validazione e metadati comuni.
 - `semantic_utils.py`: utility comuni per config semantica e ordinamento delle unita'.
 - `semantic_breakpoint.py`: implementazione del metodo semantic breakpoint tramite backend LangChain, adattata all'output del framework.
-- `semantic_clustering.py`: placeholder strutturale per il metodo semantic clustering del paper.
+- `semantic_clustering.py`: implementazione del metodo semantic clustering del paper, con supporto `single_linkage` e `dbscan`.
 - `semantic.py`: alias intenzionalmente ambiguo che fallisce con un messaggio guidato; serve a forzare l'uso di nomi espliciti.
 - `__init__.py`: abilita gli import del package.
 
@@ -25,3 +25,18 @@ Naming consigliato per i metodi semantici:
 - `chunking.type: semantic_clustering`
 
 Questo evita collisioni nella cache e mantiene leggibili i risultati sperimentali.
+
+Config minima consigliata per `semantic_clustering`:
+- `clustering_mode: single_linkage` oppure `dbscan`
+- `lambda: 0.5`
+- `number_of_chunks: <int>` obbligatorio per `single_linkage`
+- `stop_distance_threshold: 0.5` per `single_linkage`
+- `dbscan_eps: 0.3` per `dbscan`
+- `dbscan_min_samples: 2` per `dbscan`
+
+Note implementative:
+- il metodo e' sentence-level come nel paper;
+- i chunk possono contenere frasi non contigue;
+- il testo finale del chunk concatena comunque le frasi nell'ordine originale del documento;
+- per `single_linkage`, `max_chunk_size` viene derivato come `ceil(num_sentences / number_of_chunks)` per ciascun documento;
+- per `dbscan` il backend usato e' `scikit-learn` con matrice di distanza precomputata.

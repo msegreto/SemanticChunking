@@ -12,6 +12,10 @@ SUPPORTED_BREAKPOINT_THRESHOLD_TYPES = {
     "interquartile",
     "gradient",
 }
+SUPPORTED_CLUSTERING_MODES = {
+    "single_linkage",
+    "dbscan",
+}
 
 
 def validate_common_semantic_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -95,3 +99,50 @@ def gradient_scores(values: Any) -> np.ndarray:
     if array.size == 1:
         return np.asarray([0.0], dtype=float)
     return np.gradient(array)
+
+
+def clipped_cosine_distance_matrix(embeddings: Any) -> np.ndarray:
+    matrix = l2_normalize_embeddings(embeddings)
+    if matrix.shape[0] == 0:
+        return np.asarray([], dtype=float).reshape(0, 0)
+
+    similarities = matrix @ matrix.T
+    similarities = np.clip(similarities, -1.0, 1.0)
+    similarities = np.maximum(similarities, 0.0)
+    distances = 1.0 - similarities
+    np.fill_diagonal(distances, 0.0)
+    return distances
+
+
+def positional_distance_matrix(num_items: int) -> np.ndarray:
+    if num_items < 0:
+        raise ValueError(f"num_items must be >= 0, got {num_items}.")
+    if num_items == 0:
+        return np.asarray([], dtype=float).reshape(0, 0)
+
+    indices = np.arange(num_items, dtype=float)
+    distances = np.abs(indices[:, None] - indices[None, :]) / float(num_items)
+    np.fill_diagonal(distances, 0.0)
+    return distances
+
+
+def joint_position_semantic_distance_matrix(
+    embeddings: Any,
+    *,
+    positional_weight: float,
+) -> np.ndarray:
+    if positional_weight < 0.0 or positional_weight > 1.0:
+        raise ValueError(
+            f"positional_weight must be in [0, 1], got {positional_weight}."
+        )
+
+    semantic_distances = clipped_cosine_distance_matrix(embeddings)
+    num_items = semantic_distances.shape[0]
+    positional_distances = positional_distance_matrix(num_items)
+
+    joint = (
+        positional_weight * positional_distances
+        + (1.0 - positional_weight) * semantic_distances
+    )
+    np.fill_diagonal(joint, 0.0)
+    return joint
