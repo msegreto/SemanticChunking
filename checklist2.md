@@ -161,37 +161,9 @@ Pianificare l'implementazione del chunker `semantic_clustering` nel framework co
   - metadati di provenienza frase
 - [ ] Verificare che retrieval e intrinsic evaluation non assumano implicitamente contiguita'
 
-### 5. Esperimenti
-
-- [ ] Creare un nuovo YAML esperimento, ad esempio `configs/experiments/semantic_clustering.yaml`
-- [ ] Allineare dataset iniziale a quello gia' usato per `semantic_breakpoint` per confronto diretto
-- [ ] Tenere fisso l'embedder iniziale per non mischiare effetti del chunker con effetti dell'embedding model
-- [ ] Confrontare almeno:
-  - `fixed`
-  - `semantic_breakpoint`
-  - `semantic_clustering`
-- [ ] Loggare:
-  - numero medio chunk per documento
-  - distribuzione dimensione chunk
-  - percentuale chunk non contigui, se ammessi
-  - tempo totale chunking
-
-### 6. Test
-
-- [ ] Test unitari per validazione config
-- [ ] Test unitari per joint distance
-- [ ] Test unitari per merge single-linkage
-- [ ] Test su documento sintetico piccolo con cluster attesi
-- [ ] Test sulla cache: metadata match / mismatch
-- [ ] Test di regressione per assicurare che l'orchestrator continui a funzionare con il nuovo chunker
-
-### 7. Documentazione
+### 5. Documentazione
 
 - [ ] Aggiornare `src/chunking/README.md`
-- [ ] Documentare chiaramente:
-  - differenza tra implementazione paper-faithful e adattamenti necessari alla pipeline
-  - limiti noti
-  - costo computazionale atteso rispetto a `fixed` e `semantic_breakpoint`
 
 ## Ordine Di Esecuzione Consigliato
 

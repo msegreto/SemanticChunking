@@ -41,10 +41,17 @@ def validate_common_semantic_config(config: dict[str, Any]) -> dict[str, Any]:
             "Semantic chunking config requires 'embedding_batch_size' as a positive integer."
         )
 
+    show_embedding_progress = config.get("show_embedding_progress", False)
+    if not isinstance(show_embedding_progress, bool):
+        raise ValueError(
+            "Semantic chunking config requires 'show_embedding_progress' as a boolean."
+        )
+
     prepared = dict(config)
     prepared["embedding_model"] = embedding_model.strip()
     prepared["similarity_metric"] = similarity_metric
     prepared["embedding_batch_size"] = batch_size
+    prepared["show_embedding_progress"] = show_embedding_progress
     return prepared
 
 
@@ -53,6 +60,7 @@ def build_common_semantic_metadata(config: dict[str, Any]) -> dict[str, Any]:
         "embedding_model": config["embedding_model"],
         "similarity_metric": config["similarity_metric"],
         "embedding_batch_size": config["embedding_batch_size"],
+        "show_embedding_progress": config["show_embedding_progress"],
     }
 
 

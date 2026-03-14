@@ -146,6 +146,11 @@ class ExperimentOrchestrator:
         embedding_cfg = self.config.get("embedding", {})
         if isinstance(embedding_cfg.get("name"), str) and embedding_cfg["name"].strip():
             chunking_cfg.setdefault("embedding_model", embedding_cfg["name"].strip())
+        if isinstance(embedding_cfg.get("show_progress_bar"), bool):
+            chunking_cfg.setdefault(
+                "show_embedding_progress",
+                embedding_cfg["show_progress_bar"],
+            )
         if self.config_path is not None:
             chunking_cfg.setdefault("yaml_name", self.config_path.name)
         else:
