@@ -134,13 +134,13 @@ evaluation:
     chunk_stickiness: true
 
   intrinsic_model:
-    backend: lexical           # oppure hf_causal_lm
+    backend: hf_causal_lm      # oppure lexical
     name: sshleifer/tiny-gpt2
     device: auto
     max_length: 1024
     trust_remote_code: false
-    edge_threshold: 0.0
-    local_window: 1
+    edge_threshold: 0.8
+    sequential_delta: 1
 
   save:
     enabled: true

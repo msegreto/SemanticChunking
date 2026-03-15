@@ -26,34 +26,29 @@ def _edge_weight(scorer: Any, q: str, d: str) -> float:
 
 def _structural_entropy(num_nodes: int, edges: List[Tuple[int, int, float]]) -> float:
     """
-    Lightweight graph structural entropy approximation.
-
-    Degree-based entropy:
-        H = - sum_i p_i log2(p_i)
-    where p_i is normalized node degree.
-
-    Lower = tighter / stickier graph.
+    Structural entropy aligned with the MoC paper:
+        CS(G) = -sum_i (h_i / (2m)) * log2(h_i / (2m))
+    where h_i is node degree and m is number of edges.
     """
     if num_nodes == 0:
         return 0.0
 
     degrees = [0.0 for _ in range(num_nodes)]
-    total_weight = 0.0
 
-    for i, j, w in edges:
-        degrees[i] += w
-        degrees[j] += w
-        total_weight += w
+    for i, j, _w in edges:
+        degrees[i] += 1.0
+        degrees[j] += 1.0
 
-    total_degree = sum(degrees)
-    if total_degree <= 0:
+    m = len(edges)
+    if m <= 0:
         return 0.0
 
+    normalizer = 2.0 * float(m)
     entropy = 0.0
     for degree in degrees:
         if degree <= 0:
             continue
-        p = degree / total_degree
+        p = degree / normalizer
         entropy -= p * math.log2(p)
 
     return entropy
@@ -67,17 +62,23 @@ def compute_chunk_stickiness(
     """
     Compute two variants:
     - complete: all chunk pairs
-    - incomplete: local-window pairs only
+    - incomplete: order-constrained pairs only
     """
     chunks: List[Dict[str, Any]] = doc["chunks"]
     n = len(chunks)
 
     if n < 2:
-        return {"complete": 0.0, "incomplete": 0.0}
+        return {
+            "complete": 0.0,
+            "incomplete": 0.0,
+            "complete_edges": 0.0,
+            "incomplete_edges": 0.0,
+        }
 
     model_cfg = config.get("intrinsic_model", {})
-    edge_threshold = float(model_cfg.get("edge_threshold", 0.0))
-    local_window = int(model_cfg.get("local_window", 1))
+    edge_threshold = float(model_cfg.get("edge_threshold", 0.8))
+    edge_threshold = max(0.0, min(1.0, edge_threshold))
+    sequential_delta = int(model_cfg.get("sequential_delta", 0))
 
     texts = [chunk["text"] for chunk in chunks]
 
@@ -86,19 +87,21 @@ def compute_chunk_stickiness(
 
     for i in range(n):
         for j in range(i + 1, n):
-            w_ij = _edge_weight(scorer, texts[i], texts[j])
-            w_ji = _edge_weight(scorer, texts[j], texts[i])
-            w = max(w_ij, w_ji)
+            # Paper formulation uses a directed relevance criterion Edge(d_i, d_j) > K.
+            w = _edge_weight(scorer, texts[i], texts[j])
 
             if w < edge_threshold:
                 continue
 
             complete_edges.append((i, j, w))
 
-            if abs(i - j) <= local_window:
+            # Strict-paper style sequence-aware constraint.
+            if (j - i) > sequential_delta:
                 incomplete_edges.append((i, j, w))
 
     return {
         "complete": _structural_entropy(n, complete_edges),
         "incomplete": _structural_entropy(n, incomplete_edges),
+        "complete_edges": float(len(complete_edges)),
+        "incomplete_edges": float(len(incomplete_edges)),
     }

@@ -8,7 +8,7 @@ from src.evaluation.intrinsic.base import BaseIntrinsicEvaluator
 from src.evaluation.intrinsic.metrics.boundary_clarity import compute_boundary_clarity
 from src.evaluation.intrinsic.metrics.chunk_stickiness import compute_chunk_stickiness
 from src.evaluation.intrinsic.metrics.stats import build_global_statistics
-from src.evaluation.intrinsic.metrics.utils import count_total_chunks, normalize_chunk_output
+from src.evaluation.intrinsic.metrics.utils import count_total_chunks, count_words, normalize_chunk_output
 from src.evaluation.intrinsic.models.perplexity_scorer import PerplexityScorer
 
 
@@ -30,9 +30,17 @@ class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
         csi_values: List[float] = []
 
         for doc in docs:
+            chunks = doc["chunks"]
+            chunk_texts = [chunk.get("text", "") for chunk in chunks]
+            total_chars = sum(len(text) for text in chunk_texts)
+            total_words = sum(count_words(text) for text in chunk_texts)
+            num_chunks = len(chunks)
+
             doc_result: Dict[str, Any] = {
                 "doc_id": doc["doc_id"],
-                "num_chunks": len(doc["chunks"]),
+                "num_chunks": num_chunks,
+                "avg_chunk_chars": (float(total_chars) / num_chunks) if num_chunks > 0 else 0.0,
+                "avg_chunk_words": (float(total_words) / num_chunks) if num_chunks > 0 else 0.0,
             }
 
             if bc_enabled:
@@ -52,6 +60,8 @@ class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
                 )
                 doc_result["chunk_stickiness_complete"] = cs_result["complete"]
                 doc_result["chunk_stickiness_incomplete"] = cs_result["incomplete"]
+                doc_result["chunk_stickiness_complete_edges"] = cs_result["complete_edges"]
+                doc_result["chunk_stickiness_incomplete_edges"] = cs_result["incomplete_edges"]
                 csc_values.append(cs_result["complete"])
                 csi_values.append(cs_result["incomplete"])
 
@@ -76,6 +86,10 @@ class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
                 "num_documents": len(docs),
                 "num_chunks": count_total_chunks(docs),
                 "scorer_backend": scorer.backend_name,
+                "intrinsic_model": {
+                    "edge_threshold": float(model_cfg.get("edge_threshold", 0.8)),
+                    "sequential_delta": int(model_cfg.get("sequential_delta", 0)),
+                },
             },
         }
 

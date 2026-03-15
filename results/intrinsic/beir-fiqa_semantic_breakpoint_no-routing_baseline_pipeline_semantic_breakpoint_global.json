@@ -1,4 +1,16 @@
 {
+  "avg_chunk_chars": {
+    "mean": 378.36081855572087,
+    "min": 6.0,
+    "max": 5015.0,
+    "variance": 78849.60011382641
+  },
+  "avg_chunk_words": {
+    "mean": 68.52996647652117,
+    "min": 1.0,
+    "max": 1056.0,
+    "variance": 2545.5772764478206
+  },
   "boundary_clarity": {
     "mean": 0.9031233962500416,
     "min": 0.5,
@@ -6,16 +18,28 @@
     "variance": 0.006884039351725073
   },
   "chunk_stickiness_complete": {
-    "mean": 0.848450830420817,
+    "mean": 0.9017088231090684,
     "min": 0.0,
-    "max": 2.888531141832864,
-    "variance": 0.16274694833546255
+    "max": 3.0,
+    "variance": 0.12489246271125638
+  },
+  "chunk_stickiness_complete_edges": {
+    "mean": 0.9657118055555556,
+    "min": 0.0,
+    "max": 28.0,
+    "variance": 0.4847791808328511
   },
   "chunk_stickiness_incomplete": {
-    "mean": 0.8446794297547288,
+    "mean": 0.9017088231090684,
     "min": 0.0,
-    "max": 2.7613944736829477,
-    "variance": 0.15834722259464418
+    "max": 3.0,
+    "variance": 0.12489246271125638
+  },
+  "chunk_stickiness_incomplete_edges": {
+    "mean": 0.9657118055555556,
+    "min": 0.0,
+    "max": 28.0,
+    "variance": 0.4847791808328511
   },
   "metadata": {
     "num_documents": 57600

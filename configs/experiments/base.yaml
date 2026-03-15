@@ -64,13 +64,13 @@ evaluation:
     chunk_stickiness: true
 
   intrinsic_model:
-    backend: lexical # or hf_causal_lm
+    backend: lexical # or hf_causal_lm 
     name: sshleifer/tiny-gpt2 # distil-gpt2 or sshleifer/tiny-gpt2 or gpt2
     device: auto
     max_length: 1024
     trust_remote_code: false
     edge_threshold: 0.0
-    local_window: 1
+    sequential_delta: 0
   
   save:
     enabled: true

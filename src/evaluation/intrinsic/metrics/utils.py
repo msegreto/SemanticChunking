@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from typing import Any, Dict, List
 
@@ -98,3 +99,9 @@ def _extract_chunks(chunk_output: Any) -> List[Dict[str, Any]]:
 
 def count_total_chunks(docs: List[Dict[str, Any]]) -> int:
     return sum(len(doc["chunks"]) for doc in docs)
+
+
+def count_words(text: str) -> int:
+    if not text:
+        return 0
+    return len(re.findall(r"\b\w+\b", str(text)))
