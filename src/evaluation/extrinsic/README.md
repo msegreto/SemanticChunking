@@ -6,10 +6,12 @@ Nel progetto attuale il task implementato è soprattutto il document retrieval.
 
 File presenti:
 - `base.py`: interfaccia `BaseExtrinsicEvaluator`.
+- `common.py`: helper condivisi per contesto di run e costruzione righe output.
 - `factory.py`: factory per scegliere l'evaluator richiesto.
-- `document_retrieval.py`: evaluator principale. Carica query e qrels, ricarica embedder e retriever, esegue la ricerca e calcola macro precision, recall e F1 a vari `k`.
+- `document_retrieval.py`: evaluator principale. Carica query e qrels, ricarica embedder e retriever, esegue la ricerca e calcola macro precision/recall/F1 e DCG/NDCG a vari `k` (DCG/NDCG via `ir_measures`).
+- `evidence_retrieval.py`: placeholder con wiring YAML + validazione prerequisiti (`evidence_path`).
+- `answer_generation.py`: placeholder con wiring YAML + validazione prerequisiti (`answers_path`, `generation_model.name`).
 - `io.py`: risolve i path a query, qrels e metadata indice, e carica questi file dal disco.
-- `metrics.py`: metrica elementare precision/recall/F1.
 - `__init__.py`: abilita gli import del package.
 
 Collegamenti:
@@ -22,3 +24,9 @@ Nota importante sullo stato attuale:
 - l'evaluator `document_retrieval` ricarica l'embedder tramite `src.embeddings.factory.EmbedderFactory`, quindi supporta tutti gli embedder registrati nella factory;
 - per i retriever sono supportati `numpy` e `faiss`;
 - e' possibile campionare un sottoinsieme di query con `evaluation.extrinsic_tasks.document_retrieval.query_sample_size`.
+- i task extrinsic attivi sono selezionati da `evaluation.extrinsic_tasks_to_run` (lista). Se assente, fallback retrocompatibile a `evaluation.extrinsic_evaluator`.
+
+Scelta di aggregazione chunk -> documento (per metriche doc-level come DCG/NDCG):
+- il retrieval opera sui chunk, mentre la valutazione `document_retrieval` e' a livello documento;
+- quando piu' chunk appartengono allo stesso documento, il punteggio documento viene aggregato con strategia `max`;
+- quindi, per ogni query, il punteggio del documento e' il massimo score tra i chunk recuperati di quel documento.

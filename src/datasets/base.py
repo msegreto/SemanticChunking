@@ -28,6 +28,15 @@ class BaseDatasetProcessor(ABC):
 
     DEFAULT_SPLIT = "default"
     NORMALIZED_SCHEMA_VERSION = "1.0"
+    DEFAULT_SUPPORTED_EXTRINSIC_TASKS = {
+        "document_retrieval": True,
+        "evidence_retrieval": False,
+        "answer_generation": False,
+    }
+    OPTIONAL_TASK_ARTIFACTS = {
+        "evidence_retrieval": ("evidences", "evidences.json"),
+        "answer_generation": ("answers", "answers.json"),
+    }
 
     def process(self, config: dict) -> Any:
         normalized_data = self.try_load_reusable_normalized(config)
@@ -50,6 +59,9 @@ class BaseDatasetProcessor(ABC):
     def build_from_raw(self, config: dict) -> dict[str, Any]:
         raw_path = self.ensure_available(config)
         data = self.load_raw(raw_path=raw_path, config=config)
+        optional_payload = self.load_optional_task_artifacts(raw_path=raw_path, config=config)
+        if optional_payload:
+            data.update(optional_payload)
         self.validate_dataset_payload(data, context="raw load")
         return data
 
@@ -57,6 +69,13 @@ class BaseDatasetProcessor(ABC):
         split = self.get_split(config)
         normalized_dir = self.resolve_normalized_dir(config)
         raw_path = self.resolve_raw_dir(config)
+        required_tasks = self.required_extrinsic_tasks(config)
+        checked_tasks = sorted({*required_tasks, "document_retrieval"})
+        supported_tasks = self.supported_extrinsic_tasks(config)
+        if "evidences" in data:
+            supported_tasks["evidence_retrieval"] = True
+        if "answers" in data:
+            supported_tasks["answer_generation"] = True
 
         data.setdefault("metadata", {})
         data["metadata"].update(
@@ -66,19 +85,27 @@ class BaseDatasetProcessor(ABC):
                 "normalized_path": str(normalized_dir),
                 "split": split,
                 "normalized_schema_version": self.NORMALIZED_SCHEMA_VERSION,
+                "supported_extrinsic_tasks": supported_tasks,
+                "checked_extrinsic_tasks": checked_tasks,
+                "raw_refresh_attempted_for_tasks": checked_tasks,
             }
         )
 
         if self.should_save_normalized(config):
             self.validate_dataset_payload(data, context="pre-save normalized")
             self.save_normalized(data=data, normalized_dir=normalized_dir, split=split)
+            normalized_files = {
+                "documents": "documents.jsonl",
+                "queries": "queries.json",
+                "qrels": f"qrels/{split}.json",
+            }
+            if "evidences" in data:
+                normalized_files["evidences"] = "evidences.json"
+            if "answers" in data:
+                normalized_files["answers"] = "answers.json"
             data["metadata"].update(
                 {
-                    "normalized_files": {
-                        "documents": "documents.jsonl",
-                        "queries": "queries.json",
-                        "qrels": f"qrels/{split}.json",
-                    }
+                    "normalized_files": normalized_files
                 }
             )
 
@@ -98,16 +125,80 @@ class BaseDatasetProcessor(ABC):
             return None
 
         data = self.load_normalized(normalized_dir=normalized_dir, split=split, config=config)
+        self._try_enrich_normalized_task_artifacts(
+            data=data,
+            normalized_dir=normalized_dir,
+            config=config,
+        )
+
+        required_tasks = self.required_extrinsic_tasks(config)
+        supported_tasks_after_enrich = self.supported_extrinsic_tasks(config)
+        if "evidences" in data:
+            supported_tasks_after_enrich["evidence_retrieval"] = True
+        if "answers" in data:
+            supported_tasks_after_enrich["answer_generation"] = True
+        missing_required_tasks = [
+            task_name
+            for task_name in required_tasks
+            if not bool(supported_tasks_after_enrich.get(task_name, False))
+        ]
+        attempted_raw_refresh = self._normalized_raw_refresh_attempted_tasks(normalized_dir)
+        should_force_raw_refresh = [
+            task_name
+            for task_name in missing_required_tasks
+            if task_name not in attempted_raw_refresh
+        ]
+        if should_force_raw_refresh:
+            print(
+                "[DATASET] Missing required task artifacts in normalized; "
+                "forcing one raw refresh attempt for tasks="
+                f"{should_force_raw_refresh}."
+            )
+            return None
+
         self.validate_dataset_payload(data, context="normalized load")
+        checked_tasks = sorted({*required_tasks, "document_retrieval"})
+        supported_tasks = supported_tasks_after_enrich
         data.setdefault("metadata", {})
         data["metadata"].update(
             {
                 "loaded_from": "normalized",
                 "normalized_path": str(normalized_dir),
                 "split": split,
+                "supported_extrinsic_tasks": supported_tasks,
+                "checked_extrinsic_tasks": checked_tasks,
             }
         )
+        self._persist_normalized_task_state(
+            data=data,
+            normalized_dir=normalized_dir,
+            split=split,
+        )
         return data
+
+    def supported_extrinsic_tasks(self, config: dict) -> dict[str, bool]:
+        supported = dict(self.DEFAULT_SUPPORTED_EXTRINSIC_TASKS)
+        return {str(k): bool(v) for k, v in supported.items()}
+
+    def required_extrinsic_tasks(self, config: dict) -> list[str]:
+        raw = config.get("required_extrinsic_tasks", ["document_retrieval"])
+        if not isinstance(raw, list):
+            return ["document_retrieval"]
+        tasks: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            name = item.strip().lower().replace("-", "_")
+            if not name:
+                continue
+            if name in seen:
+                continue
+            seen.add(name)
+            tasks.append(name)
+        if "document_retrieval" not in seen:
+            tasks.insert(0, "document_retrieval")
+        return tasks
 
     def validate_dataset_payload(self, data: Any, context: str = "dataset payload") -> None:
         if not isinstance(data, dict):
@@ -251,6 +342,21 @@ class BaseDatasetProcessor(ABC):
         queries = json.loads(queries_path.read_text(encoding="utf-8"))
         qrels = json.loads(qrels_path.read_text(encoding="utf-8"))
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        normalized_files = metadata.get("normalized_files", {})
+
+        evidences = None
+        answers = None
+        if isinstance(normalized_files, dict):
+            evidences_rel = normalized_files.get("evidences")
+            answers_rel = normalized_files.get("answers")
+            if isinstance(evidences_rel, str) and evidences_rel:
+                evidence_path = normalized_dir / evidences_rel
+                if evidence_path.exists():
+                    evidences = json.loads(evidence_path.read_text(encoding="utf-8"))
+            if isinstance(answers_rel, str) and answers_rel:
+                answers_path = normalized_dir / answers_rel
+                if answers_path.exists():
+                    answers = json.loads(answers_path.read_text(encoding="utf-8"))
 
         metadata.update(
             {
@@ -259,17 +365,24 @@ class BaseDatasetProcessor(ABC):
             }
         )
 
-        return {
+        payload = {
             "documents": documents,
             "queries": queries,
             "qrels": qrels,
             "metadata": metadata,
         }
+        if evidences is not None:
+            payload["evidences"] = evidences
+        if answers is not None:
+            payload["answers"] = answers
+        return payload
 
     def save_normalized(self, data: dict, normalized_dir: Path, split: str) -> None:
         documents = data.get("documents", {})
         queries = data.get("queries", {})
         qrels = data.get("qrels", {})
+        evidences = data.get("evidences")
+        answers = data.get("answers")
         metadata = dict(data.get("metadata", {}))
 
         if documents is None:
@@ -284,23 +397,142 @@ class BaseDatasetProcessor(ABC):
         documents_path = normalized_dir / "documents.jsonl"
         queries_path = normalized_dir / "queries.json"
         qrels_path = normalized_dir / "qrels" / f"{split}.json"
+        evidences_path = normalized_dir / "evidences.json"
+        answers_path = normalized_dir / "answers.json"
         metadata_path = normalized_dir / "metadata.json"
 
         self._write_documents_jsonl(documents_path, documents)
         queries_path.write_text(json.dumps(queries, ensure_ascii=False, indent=2), encoding="utf-8")
         qrels_path.write_text(json.dumps(qrels, ensure_ascii=False, indent=2), encoding="utf-8")
+        normalized_files = {
+            "documents": "documents.jsonl",
+            "queries": "queries.json",
+            "qrels": f"qrels/{split}.json",
+        }
+        if evidences is not None:
+            evidences_path.write_text(json.dumps(evidences, ensure_ascii=False, indent=2), encoding="utf-8")
+            normalized_files["evidences"] = "evidences.json"
+        if answers is not None:
+            answers_path.write_text(json.dumps(answers, ensure_ascii=False, indent=2), encoding="utf-8")
+            normalized_files["answers"] = "answers.json"
 
         metadata.update(
             {
                 "normalized_schema_version": self.NORMALIZED_SCHEMA_VERSION,
-                "normalized_files": {
-                    "documents": "documents.jsonl",
-                    "queries": "queries.json",
-                    "qrels": f"qrels/{split}.json",
-                },
+                "normalized_files": normalized_files,
             }
         )
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def load_optional_task_artifacts(self, raw_path: Path, config: dict) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        required_tasks = self.required_extrinsic_tasks(config)
+        for task_name in required_tasks:
+            mapping = self.OPTIONAL_TASK_ARTIFACTS.get(task_name)
+            if mapping is None:
+                continue
+            payload_key, filename = mapping
+            artifact_path = raw_path / filename
+            if not artifact_path.exists():
+                continue
+            try:
+                artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+                payload[payload_key] = artifact_payload
+            except Exception as e:
+                print(
+                    "[DATASET] Optional artifact found but unreadable for "
+                    f"{task_name} at {artifact_path}: {e}. Ignoring artifact."
+                )
+        return payload
+
+    def _try_enrich_normalized_task_artifacts(
+        self,
+        *,
+        data: dict[str, Any],
+        normalized_dir: Path,
+        config: dict,
+    ) -> None:
+        required_tasks = self.required_extrinsic_tasks(config)
+
+        for task_name in required_tasks:
+            mapping = self.OPTIONAL_TASK_ARTIFACTS.get(task_name)
+            if mapping is None:
+                continue
+            payload_key, filename = mapping
+            if payload_key in data:
+                continue
+
+            destination = normalized_dir / filename
+
+            if destination.exists():
+                try:
+                    data[payload_key] = json.loads(destination.read_text(encoding="utf-8"))
+                    continue
+                except Exception as e:
+                    print(
+                        "[DATASET] Optional normalized artifact unreadable for "
+                        f"{task_name} at {destination}: {e}. Continuing."
+                    )
+
+    def _persist_normalized_task_state(
+        self,
+        *,
+        data: dict[str, Any],
+        normalized_dir: Path,
+        split: str,
+    ) -> None:
+        metadata = data.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        normalized_files = metadata.get("normalized_files", {})
+        if not isinstance(normalized_files, dict):
+            normalized_files = {}
+        normalized_files = dict(normalized_files)
+        normalized_files.setdefault("documents", "documents.jsonl")
+        normalized_files.setdefault("queries", "queries.json")
+        normalized_files.setdefault("qrels", f"qrels/{split}.json")
+
+        if "evidences" in data:
+            evidences_path = normalized_dir / "evidences.json"
+            evidences_path.parent.mkdir(parents=True, exist_ok=True)
+            evidences_path.write_text(
+                json.dumps(data["evidences"], ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            normalized_files["evidences"] = "evidences.json"
+
+        if "answers" in data:
+            answers_path = normalized_dir / "answers.json"
+            answers_path.parent.mkdir(parents=True, exist_ok=True)
+            answers_path.write_text(
+                json.dumps(data["answers"], ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            normalized_files["answers"] = "answers.json"
+
+        metadata["normalized_files"] = normalized_files
+        metadata_path = normalized_dir / "metadata.json"
+        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _normalized_raw_refresh_attempted_tasks(self, normalized_dir: Path) -> set[str]:
+        metadata_path = normalized_dir / "metadata.json"
+        if not metadata_path.exists():
+            return set()
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except Exception:
+            return set()
+        if not isinstance(metadata, dict):
+            return set()
+        raw_attempted = metadata.get("raw_refresh_attempted_for_tasks", [])
+        if not isinstance(raw_attempted, list):
+            return set()
+        return {
+            str(task).strip().lower().replace("-", "_")
+            for task in raw_attempted
+            if isinstance(task, str) and task.strip()
+        }
 
     @staticmethod
     def _ensure_dir(path: Path) -> Path:

@@ -6,6 +6,11 @@ from typing import Any, Dict, Sequence
 
 
 class BaseExtrinsicEvaluator(ABC):
+    @property
+    @abstractmethod
+    def task_name(self) -> str:
+        """Unique extrinsic task identifier (e.g. document_retrieval)."""
+
     @abstractmethod
     def evaluate(
         self,

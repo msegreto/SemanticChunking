@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import csv
+import gzip
 from pathlib import Path
 from typing import Any
 
@@ -34,21 +34,26 @@ class MSMarcoDatasetProcessor(BaseDatasetProcessor):
 
         raw_path = self.resolve_raw_dir(config)
         raw_path.mkdir(parents=True, exist_ok=True)
+        include_lookup = bool(config.get("include_lookup", False))
+        extract_archives = bool(config.get("extract_archives", False))
 
-        if not validate_msmarco_raw(raw_path, split):
+        if not validate_msmarco_raw(raw_path, split, include_lookup=include_lookup):
             if not self.should_download(config):
-                missing = list_missing_msmarco_files(raw_path, split)
+                missing = list_missing_msmarco_files(raw_path, split, include_lookup=include_lookup)
                 raise FileNotFoundError(
                     f"MS MARCO dataset incomplete at '{raw_path}'. Missing files for split '{split}': {missing}"
                 )
 
             download_msmarco_documents(
                 target_dir=raw_path,
+                split=split,
                 force=bool(config.get("force_download", False)),
+                include_lookup=include_lookup,
+                extract_archives=extract_archives,
             )
 
-            if not validate_msmarco_raw(raw_path, split):
-                missing = list_missing_msmarco_files(raw_path, split)
+            if not validate_msmarco_raw(raw_path, split, include_lookup=include_lookup):
+                missing = list_missing_msmarco_files(raw_path, split, include_lookup=include_lookup)
                 raise FileNotFoundError(
                     f"MS MARCO download finished, but raw dataset is still incomplete. Missing: {missing}"
                 )
@@ -61,13 +66,14 @@ class MSMarcoDatasetProcessor(BaseDatasetProcessor):
         canonical_name = self._canonical_dataset_name(config)
         max_documents = config.get("max_documents")
 
-        corpus_path = raw_path / "msmarco-docs.tsv"
-        queries_path = self._resolve_queries_path(raw_path, split)
-        qrels_path = self._resolve_qrels_path(raw_path, split)
+        corpus_path = self._resolve_existing_path(raw_path, "msmarco-docs.tsv")
+        queries_path = self._resolve_existing_path(raw_path, self._resolve_queries_filename(split))
+        qrels_filename = self._resolve_qrels_filename(split)
+        qrels_path = self._resolve_existing_path(raw_path, qrels_filename) if qrels_filename else None
 
         documents = self._load_corpus(corpus_path, max_documents=max_documents)
         queries = self._load_queries(queries_path)
-        qrels = self._load_qrels(qrels_path) if qrels_path.exists() else {}
+        qrels = self._load_qrels(qrels_path) if qrels_path is not None else {}
 
         return {
             "documents": documents,
@@ -82,7 +88,7 @@ class MSMarcoDatasetProcessor(BaseDatasetProcessor):
                 "raw_path": str(raw_path),
                 "documents_path": str(corpus_path),
                 "queries_path": str(queries_path),
-                "qrels_path": str(qrels_path) if qrels_path.exists() else None,
+                "qrels_path": str(qrels_path) if qrels_path is not None else None,
                 "max_documents": max_documents,
                 "num_documents": len(documents),
                 "num_queries": len(queries),
@@ -91,24 +97,42 @@ class MSMarcoDatasetProcessor(BaseDatasetProcessor):
         }
 
     @staticmethod
-    def _resolve_queries_path(raw_path: Path, split: str) -> Path:
+    def _resolve_queries_filename(split: str) -> str:
         if split == "train":
-            return raw_path / "msmarco-doctrain-queries.tsv"
+            return "msmarco-doctrain-queries.tsv"
         if split == "dev":
-            return raw_path / "msmarco-docdev-queries.tsv"
+            return "msmarco-docdev-queries.tsv"
         if split == "test":
-            return raw_path / "docleaderboard-queries.tsv"
+            return "docleaderboard-queries.tsv"
         raise ValueError(f"Unsupported MS MARCO split '{split}'")
 
     @staticmethod
-    def _resolve_qrels_path(raw_path: Path, split: str) -> Path:
+    def _resolve_qrels_filename(split: str) -> str | None:
         if split == "train":
-            return raw_path / "msmarco-doctrain-qrels.tsv"
+            return "msmarco-doctrain-qrels.tsv"
         if split == "dev":
-            return raw_path / "msmarco-docdev-qrels.tsv"
+            return "msmarco-docdev-qrels.tsv"
         if split == "test":
-            return raw_path / "msmarco-doctest-qrels.tsv"
+            return None
         raise ValueError(f"Unsupported MS MARCO split '{split}'")
+
+    @staticmethod
+    def _resolve_existing_path(raw_path: Path, filename: str) -> Path:
+        plain = raw_path / filename
+        gz = raw_path / f"{filename}.gz"
+        if plain.exists():
+            return plain
+        if gz.exists():
+            return gz
+        raise FileNotFoundError(
+            f"Expected MS MARCO file not found at '{plain}' or '{gz}'."
+        )
+
+    @staticmethod
+    def _open_text(path: Path):
+        if path.suffix == ".gz":
+            return gzip.open(path, "rt", encoding="utf-8")
+        return path.open("r", encoding="utf-8")
 
     @staticmethod
     def _load_corpus(
@@ -117,7 +141,7 @@ class MSMarcoDatasetProcessor(BaseDatasetProcessor):
     ) -> dict[str, dict[str, str]]:
         documents: dict[str, dict[str, str]] = {}
 
-        with corpus_path.open("r", encoding="utf-8") as f:
+        with MSMarcoDatasetProcessor._open_text(corpus_path) as f:
             for idx, line in enumerate(f):
                 line = line.rstrip("\n")
                 if not line:
@@ -145,7 +169,7 @@ class MSMarcoDatasetProcessor(BaseDatasetProcessor):
     def _load_queries(queries_path: Path) -> dict[str, str]:
         queries: dict[str, str] = {}
 
-        with queries_path.open("r", encoding="utf-8") as f:
+        with MSMarcoDatasetProcessor._open_text(queries_path) as f:
             for line in f:
                 line = line.rstrip("\n")
                 if not line:
@@ -166,23 +190,26 @@ class MSMarcoDatasetProcessor(BaseDatasetProcessor):
     def _load_qrels(qrels_path: Path) -> dict[str, dict[str, int]]:
         qrels: dict[str, dict[str, int]] = {}
 
-        with qrels_path.open("r", encoding="utf-8") as f:
-            reader = csv.reader(f, delimiter="\t")
-            for row in reader:
-                if not row:
+        with MSMarcoDatasetProcessor._open_text(qrels_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
                     continue
 
-                if len(row) >= 4:
-                    query_id = str(row[0])
-                    doc_id = str(row[2])
-                    score = int(row[3])
-                elif len(row) == 3:
-                    query_id = str(row[0])
-                    doc_id = str(row[1])
-                    score = int(row[2])
+                # MS MARCO qrels can be distributed as whitespace-separated files
+                # even when the extension is .tsv/.tsv.gz.
+                fields = line.split()
+                if len(fields) >= 4:
+                    query_id = str(fields[0])
+                    doc_id = str(fields[2])
+                    score = int(fields[3])
+                elif len(fields) == 3:
+                    query_id = str(fields[0])
+                    doc_id = str(fields[1])
+                    score = int(fields[2])
                 else:
                     raise ValueError(
-                        f"Invalid MS MARCO qrels row in '{qrels_path}': expected at least 3 tab-separated fields."
+                        f"Invalid MS MARCO qrels row in '{qrels_path}': expected at least 3 whitespace-separated fields."
                     )
 
                 qrels.setdefault(query_id, {})[doc_id] = score

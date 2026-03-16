@@ -3,14 +3,15 @@ experiment_name: "baseline_pipeline"
 dataset:
   name: "msmarco"
   data_dir: "data/raw/msmarco"
-  split: "test"
+  split: "dev"
   download_if_missing: true
+  include_lookup: false
+  extract_archives: false
   use_normalized_if_available: true
   save_normalized: true
 
 
 split:
-  split:
   type: sentence
   model: en_core_web_sm
   save_output: true

@@ -79,7 +79,13 @@ class ExperimentOrchestrator:
         print("[INFO] Pipeline completed successfully.")
 
     def _run_dataset_processing(self) -> Any:
-        dataset_cfg = self.config["dataset"]
+        dataset_cfg = dict(self.config["dataset"])
+        requested_tasks = (
+            self.config.get("evaluation", {}).get("extrinsic_tasks_to_run")
+            or [self.config.get("evaluation", {}).get("extrinsic_evaluator", "document_retrieval")]
+        )
+        if "required_extrinsic_tasks" not in dataset_cfg:
+            dataset_cfg["required_extrinsic_tasks"] = requested_tasks
         dataset_name = dataset_cfg["name"]
 
         print(f"[INFO] Processing dataset: {dataset_name}")

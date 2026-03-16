@@ -14,6 +14,20 @@ def _get_document_retrieval_cfg(config: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def check_document_retrieval_prerequisites(config: dict[str, Any]) -> tuple[bool, str]:
+    try:
+        queries_path = resolve_queries_path(config)
+    except Exception as e:
+        return False, f"missing queries: {e}"
+
+    try:
+        qrels_path = resolve_qrels_path(config)
+    except Exception as e:
+        return False, f"missing qrels: {e}"
+
+    return True, f"queries={queries_path}, qrels={qrels_path}"
+
+
 def resolve_queries_path(config: dict[str, Any]) -> Path:
     doc_ret_cfg = _get_document_retrieval_cfg(config)
 

@@ -83,6 +83,7 @@ evaluation:
 
   extrinsic: true
   extrinsic_evaluator: document_retrieval
+  extrinsic_tasks_to_run: [document_retrieval]
   results_dir: results/extrinsic
   extrinsic_tasks:
     document_retrieval:
@@ -91,3 +92,11 @@ evaluation:
       split: dev
       query_sample_size: 100
       query_sample_seed: 42
+    evidence_retrieval:
+      ks: [1, 3, 5, 10]
+      evidence_path: null
+    answer_generation:
+      ks: [1, 3, 5, 10]
+      answers_path: null
+      generation_model:
+        name: null

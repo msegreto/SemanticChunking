@@ -18,28 +18,28 @@
     "variance": 0.002159517831822692
   },
   "chunk_stickiness_complete": {
-    "mean": 0.04627167226008784,
+    "mean": 1.8499609893764144,
     "min": 0.0,
-    "max": 2.251629167387823,
-    "variance": 0.04935548625864575
+    "max": 3.321928094887362,
+    "variance": 0.25907646906310544
   },
   "chunk_stickiness_complete_edges": {
-    "mean": 0.049340277777777775,
+    "mean": 5.974513888888889,
     "min": 0.0,
-    "max": 5.0,
-    "variance": 0.06138498143325617
+    "max": 45.0,
+    "variance": 14.496260180362652
   },
   "chunk_stickiness_incomplete": {
-    "mean": 0.024924172417591064,
+    "mean": 1.8499609893764144,
     "min": 0.0,
-    "max": 2.251629167387823,
-    "variance": 0.026194143927542178
+    "max": 3.321928094887362,
+    "variance": 0.25907646906310544
   },
   "chunk_stickiness_incomplete_edges": {
-    "mean": 0.025815972222222223,
+    "mean": 5.974513888888889,
     "min": 0.0,
-    "max": 3.0,
-    "variance": 0.02945506335599923
+    "max": 45.0,
+    "variance": 14.496260180362652
   },
   "metadata": {
     "num_documents": 57600

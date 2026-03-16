@@ -16,3 +16,7 @@ Collegamenti principali:
 - `download_datasets.py` -> `src/datasets/`
 
 Questa cartella non contiene business logic complessa: la logica importante resta nei moduli applicativi.
+
+Note aggiornate:
+- `run_extrinsic_eval.py` esegue i task in `evaluation.extrinsic_tasks_to_run` e, se un task non e' supportato o fallisce, lo marca come `skipped` senza interrompere gli altri.
+- `download_datasets.py` supporta `--tasks` (lista separata da virgole) e controlli best-effort per artifact opzionali (`--evidence-path`, `--answers-path`) senza hard-fail.
