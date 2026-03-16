@@ -188,3 +188,61 @@ def load_index_metadata(path: Path) -> dict[str, Any]:
         raise ValueError("metadata.pkl does not contain 'items'")
 
     return metadata
+
+
+def load_evidences(path: Path) -> dict[str, list[dict[str, str]]]:
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError(f"evidences json must contain a dict, got: {type(data)}")
+
+    normalized: dict[str, list[dict[str, str]]] = {}
+    for query_id, annotations in data.items():
+        if not isinstance(annotations, list):
+            raise ValueError(
+                f"Evidence annotations for query_id={query_id} must be a list, got: {type(annotations)}"
+            )
+
+        normalized_annotations: list[dict[str, str]] = []
+        for item in annotations:
+            if not isinstance(item, dict):
+                continue
+            doc_id = item.get("doc_id")
+            evidence_text = item.get("evidence_text")
+            normalized_annotations.append(
+                {
+                    "doc_id": str(doc_id) if doc_id is not None else "",
+                    "evidence_text": str(evidence_text) if evidence_text is not None else "",
+                }
+            )
+        normalized[str(query_id)] = normalized_annotations
+
+    return normalized
+
+
+def load_answers(path: Path) -> dict[str, dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError(f"answers json must contain a dict, got: {type(data)}")
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for query_id, payload in data.items():
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"Answer entry for query_id={query_id} must be a dict, got: {type(payload)}"
+            )
+        reference_answers = payload.get("reference_answers", [])
+        if not isinstance(reference_answers, list):
+            reference_answers = []
+
+        normalized[str(query_id)] = {
+            "doc_id": str(payload.get("doc_id", "")),
+            "answerable": bool(payload.get("answerable", False)),
+            "reference_answers": [
+                str(answer).strip() for answer in reference_answers if str(answer).strip()
+            ],
+        }
+    return normalized

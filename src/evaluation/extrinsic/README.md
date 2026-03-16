@@ -9,8 +9,8 @@ File presenti:
 - `common.py`: helper condivisi per contesto di run e costruzione righe output.
 - `factory.py`: factory per scegliere l'evaluator richiesto.
 - `document_retrieval.py`: evaluator principale. Carica query e qrels, ricarica embedder e retriever, esegue la ricerca e calcola macro precision/recall/F1 e DCG/NDCG a vari `k` (DCG/NDCG via `ir_measures`).
-- `evidence_retrieval.py`: placeholder con wiring YAML + validazione prerequisiti (`evidence_path`).
-- `answer_generation.py`: placeholder con wiring YAML + validazione prerequisiti (`answers_path`, `generation_model.name`).
+- `evidence_retrieval.py`: evaluator evidence-level. Recupera top-k chunk e calcola precision/recall/F1 sentence-level misurando quante evidence sentence gold sono presenti nei chunk recuperati.
+- `answer_generation.py`: evaluator answer-level. Genera risposta dai top-5 chunk (paper setting) e calcola `qa_similarity` (coseno query-risposta) + `bertscore_f1`.
 - `io.py`: risolve i path a query, qrels e metadata indice, e carica questi file dal disco.
 - `__init__.py`: abilita gli import del package.
 
@@ -25,6 +25,8 @@ Nota importante sullo stato attuale:
 - per i retriever sono supportati `numpy` e `faiss`;
 - e' possibile campionare un sottoinsieme di query con `evaluation.extrinsic_tasks.document_retrieval.query_sample_size`.
 - i task extrinsic attivi sono selezionati da `evaluation.extrinsic_tasks_to_run` (lista). Se assente, fallback retrocompatibile a `evaluation.extrinsic_evaluator`.
+- per `answer_generation`, il modello BERTScore paper-aligned e' `microsoft/deberta-xlarge-mnli`;
+- se `generation_model.name` non e' `gpt-4o-mini`, la run viene marcata `partial` per segnalare che la generazione non e' identica al paper.
 
 Scelta di aggregazione chunk -> documento (per metriche doc-level come DCG/NDCG):
 - il retrieval opera sui chunk, mentre la valutazione `document_retrieval` e' a livello documento;
