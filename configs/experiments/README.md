@@ -4,6 +4,17 @@ Questa cartella contiene i file YAML che descrivono un esperimento end-to-end.
 
 Ogni file viene passato a `scripts/run_pipeline.py`, che a sua volta carica `src/pipelines/experiment_orchestrator.py`. L'orchestrator legge le sezioni del YAML e attiva in sequenza dataset processing, splitting, routing, chunking, intrinsic evaluation, embedding, indexing ed extrinsic evaluation.
 
+## Aggiornamento stato attuale
+
+Il pipeline è oggi **streaming-only**:
+- l'esecuzione procede per finestre incrementali;
+- lo stato di resume viene salvato in `stream_state.json` e `split_state.json`;
+- il router (se abilitato) viene applicato nel flusso streaming, attualmente a livello doc-by-doc.
+
+Di conseguenza, i nuovi YAML dovrebbero valorizzare almeno:
+- `execution.streaming_docs_per_run`
+- opzionalmente `execution.streaming_run_until_complete` (default `true`)
+
 File presenti:
 - `base.yaml`: configurazione baseline oggi più importante. Usa `beir/fiqa`, sentence splitting, router disabilitato, chunking `fixed`, embedder logico `mpnet`, retriever `numpy` e valutazioni intrinsic + extrinsic.
 - `msmarco_fixed_3.yaml`: variante sperimentale aggiuntiva, utile come secondo esempio di configurazione.
@@ -37,6 +48,9 @@ Template completo consigliato:
 experiment_name: "nome_esperimento"
 
 execution:
+  streaming: true
+  streaming_docs_per_run: 100
+  streaming_run_until_complete: true
   allow_reuse: true
   force_rebuild: false
   stages:
@@ -168,6 +182,10 @@ Nome logico dell'esperimento. Viene usato nei nomi dei risultati extrinsic e com
 ### `execution`
 
 Controlla il riuso delle cache e i rebuild forzati.
+
+Campi specifici streaming:
+- `streaming_docs_per_run`: numero di documenti processati per finestra.
+- `streaming_run_until_complete`: se `false`, esegue una sola finestra per run.
 
 - `allow_reuse`: abilita il riuso globale quando possibile.
 - `force_rebuild`: forza il ricalcolo globale di tutte le fasi che supportano cache.

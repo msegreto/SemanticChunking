@@ -2,7 +2,7 @@
 
 Questa è la cartella principale del codice applicativo del framework.
 
-L'organizzazione segue le fasi del pipeline sperimentale: acquisizione dataset, splitting, routing, chunking, embedding, retrieval e evaluation. Il file che coordina tutto è `src/pipelines/experiment_orchestrator.py`.
+L'organizzazione segue le fasi del pipeline sperimentale: acquisizione dataset, splitting, routing, chunking, embedding, retrieval e evaluation. Il file che coordina tutto è `src/pipelines/experiment_orchestrator.py` (oggi in modalità streaming-only).
 
 Sottocartelle principali:
 - `datasets/`: download, validazione, caricamento raw e normalizzazione.

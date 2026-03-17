@@ -18,10 +18,6 @@ class SemanticClusteringChunker(BaseSemanticChunker):
     def chunking_type(self) -> str:
         return "semantic_clustering"
 
-    def chunk(self, routed_output: Any, config: dict) -> Any:
-        print(f"[CHUNKING] semantic clustering chunking with config={config}")
-        return super().chunk(routed_output, config)
-
     def validate_semantic_method_config(self, config: dict[str, Any]) -> dict[str, Any]:
         clustering_mode = config.get("clustering_mode", "single_linkage")
         if not isinstance(clustering_mode, str) or not clustering_mode.strip():

@@ -47,10 +47,6 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
     def chunking_type(self) -> str:
         return "semantic_breakpoint"
 
-    def chunk(self, routed_output: Any, config: dict) -> Any:
-        print(f"[CHUNKING] semantic breakpoint chunking with config={config}")
-        return super().chunk(routed_output, config)
-
     def validate_semantic_method_config(self, config: dict[str, Any]) -> dict[str, Any]:
         threshold_type = config.get("threshold_type", "percentile")
         if not isinstance(threshold_type, str) or not threshold_type.strip():

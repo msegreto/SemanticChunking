@@ -1,47 +1,5 @@
 {
-  "avg_chunk_chars": {
-    "mean": 466.3647823011126,
-    "min": 57.333333333333336,
-    "max": 3333.0,
-    "variance": 35697.09415105718
-  },
-  "avg_chunk_words": {
-    "mean": 70.58421763457457,
-    "min": 10.0,
-    "max": 518.6666666666666,
-    "variance": 904.9225223706258
-  },
-  "boundary_clarity": {
-    "mean": 0.853770170905924,
-    "min": 0.6181818181818182,
-    "max": 1.0,
-    "variance": 0.0012654670553147484
-  },
-  "chunk_stickiness_complete": {
-    "mean": 1.584962500721156,
-    "min": 1.584962500721156,
-    "max": 1.584962500721156,
-    "variance": 0.0
-  },
-  "chunk_stickiness_complete_edges": {
-    "mean": 3.0,
-    "min": 3.0,
-    "max": 3.0,
-    "variance": 0.0
-  },
-  "chunk_stickiness_incomplete": {
-    "mean": 1.584962500721156,
-    "min": 1.584962500721156,
-    "max": 1.584962500721156,
-    "variance": 0.0
-  },
-  "chunk_stickiness_incomplete_edges": {
-    "mean": 3.0,
-    "min": 3.0,
-    "max": 3.0,
-    "variance": 0.0
-  },
   "metadata": {
-    "num_documents": 5183
+    "num_documents": 0
   }
 }

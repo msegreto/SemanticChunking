@@ -6,16 +6,22 @@ from typing import Any
 
 
 class BaseSplitter(ABC):
-    def try_load_reusable_output(self, dataset_output: Any, config: dict) -> Any | None:
-        return None
-
-    def save_output(self, split_output: Any, config: dict) -> None:
-        return None
-
     def resolve_output_path(self, config: dict) -> Path | None:
         output_path = config.get("output_path")
         return Path(output_path) if output_path else None
 
     @abstractmethod
-    def split(self, dataset_output: Any, config: dict) -> Any:
+    def build_streaming_components(self, config: dict) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def split_document_streaming(
+        self,
+        *,
+        doc_id: str,
+        text: str,
+        unit_id_start: int,
+        nlp: Any,
+        max_chars_per_batch: int,
+    ) -> tuple[list[dict[str, Any]], int]:
         raise NotImplementedError

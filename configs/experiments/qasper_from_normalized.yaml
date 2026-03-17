@@ -1,6 +1,9 @@
 experiment_name: "qasper_normalized_pipeline"
 
 execution:
+  streaming: true
+  streaming_docs_per_run: 100000
+  streaming_run_until_complete: true
   allow_reuse: true
   force_rebuild: false
   stages:
@@ -27,7 +30,6 @@ dataset:
   required_extrinsic_tasks: [document_retrieval, evidence_retrieval, answer_generation]
 
 split:
-  split:
   type: sentence
   model: en_core_web_sm
   save_output: true

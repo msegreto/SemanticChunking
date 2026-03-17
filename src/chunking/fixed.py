@@ -10,10 +10,6 @@ class FixedChunker(BaseChunker):
     def chunking_type(self) -> str:
         return "fixed"
 
-    def chunk(self, routed_output: Any, config: dict) -> Any:
-        print(f"[CHUNKING] fixed chunking with config={config}")
-        return super().chunk(routed_output, config)
-
     def validate_strategy_config(self, config: dict[str, Any]) -> dict[str, Any]:
         n_chunks = config.get("n_chunks")
         if isinstance(n_chunks, bool) or not isinstance(n_chunks, int) or n_chunks <= 0:

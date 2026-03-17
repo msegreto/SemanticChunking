@@ -13,4 +13,7 @@ Collegamenti:
 - output: struttura passata a `src/chunking/`;
 - attivazione: controllata dalla sezione `router` del file experiment YAML.
 
-Nel progetto attuale il routing è più un punto di estensione futura che una fase realmente implementata.
+Stato attuale nel flusso streaming:
+- il router è supportato e viene applicato nel pipeline;
+- oggi l'applicazione è doc-by-doc (non globale su tutta la window);
+- `dummy.py` resta una baseline pass-through, utile come punto di estensione per router futuri (es. classificatori).

@@ -18,7 +18,7 @@ Come si collega al resto del progetto:
 - persistenza: `fixed.py` usa `data/chunks/<dataset>/<yaml_name>/`; se i file della run esistono già e sono compatibili, li riusa anche con `save_chunks: false`.
 - persistenza: tutti i chunker che estendono `BaseChunker` possono leggere la cache per-run in `data/chunks/<dataset>/<yaml_name>/`; la scrittura su disco avviene solo con `save_chunks: true`.
 
-Nel run baseline attuale, questa cartella è cruciale perché `fixed.py` genera i chunk su cui si basano tutte le fasi successive.
+Nel flusso attuale (streaming-only), il chunking viene eseguito incrementale per window e per documento, mantenendo comunque invariati formato output e cache per-run.
 
 Naming consigliato per i metodi semantici:
 - `chunking.type: semantic_breakpoint`

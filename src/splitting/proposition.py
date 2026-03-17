@@ -6,12 +6,16 @@ from src.splitting.base import BaseSplitter
 
 
 class PropositionSplitter(BaseSplitter):
-    def split(self, dataset_output: Any, config: dict) -> Any:
-        print(f"[SPLIT] proposition split with config={config}")
-        return {
-            "split_units": [],
-            "metadata": {
-                "split_type": "proposition",
-                "source_metadata": dataset_output.get("metadata", {}),
-            },
-        }
+    def build_streaming_components(self, config: dict) -> dict[str, Any]:
+        raise ValueError("Streaming mode currently supports only split.type='sentence'.")
+
+    def split_document_streaming(
+        self,
+        *,
+        doc_id: str,
+        text: str,
+        unit_id_start: int,
+        nlp: Any,
+        max_chars_per_batch: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        raise ValueError("Streaming mode currently supports only split.type='sentence'.")

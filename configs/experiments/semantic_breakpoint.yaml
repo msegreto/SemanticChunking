@@ -1,6 +1,9 @@
 experiment_name: "baseline_pipeline"
 
 execution:
+  streaming: true
+  streaming_docs_per_run: 100000
+  streaming_run_until_complete: true
   allow_reuse: true
   force_rebuild: false
   stages:
@@ -26,7 +29,6 @@ dataset:
   save_normalized: true
 
 split:
-  split:
   type: sentence
   model: en_core_web_sm
   save_output: true

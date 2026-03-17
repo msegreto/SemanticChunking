@@ -30,6 +30,12 @@ class ExperimentArtifacts:
     index_output: Any = None
 
 
+@dataclass
+class StreamingWindowPaths:
+    split_tmp: Path
+    chunks_tmp: Path
+
+
 class ExperimentOrchestrator:
     def __init__(self, config: Dict[str, Any], config_path: Optional[Path] = None) -> None:
         self.config = config
@@ -48,47 +54,9 @@ class ExperimentOrchestrator:
         dataset_output = self._run_dataset_processing()
         self.artifacts.dataset_output = dataset_output
 
-        if self._streaming_enabled():
-            self._run_streaming_pipeline(dataset_output)
-            print("[INFO] Pipeline completed successfully.")
-            return
-
-        split_output = self._run_split(dataset_output)
-        self.artifacts.split_output = split_output
-
-        routed_output = self._run_router_if_needed(split_output)
-        self.artifacts.routed_output = routed_output
-
-        chunk_output = self._run_chunking(routed_output)
-        self.artifacts.chunk_output = chunk_output
-
-        intrinsic_output = self._run_intrinsic_evaluation(chunk_output)
-        self.artifacts.intrinsic_output = intrinsic_output
-
-        index_output = self._find_reusable_index(chunk_output)
-        if index_output is not None:
-            embedding_output = None
-        else:
-            embedding_output = self._run_embedding(chunk_output)
-            self.artifacts.embedding_output = embedding_output
-            index_output = self._run_indexing(embedding_output)
-
-        self.artifacts.embedding_output = embedding_output
-        self.artifacts.index_output = index_output
-
-        self._run_extrinsic_evaluation(
-            chunk_output=chunk_output,
-            embedding_output=embedding_output,
-            index_output=index_output,
-        )
-
+        # Pipeline is streaming-only: always execute the incremental path.
+        self._run_streaming_pipeline(dataset_output)
         print("[INFO] Pipeline completed successfully.")
-
-    def _streaming_enabled(self) -> bool:
-        execution = self.config.get("execution", {})
-        if not isinstance(execution, dict):
-            return False
-        return bool(execution.get("streaming", False))
 
     def _run_streaming_pipeline(self, dataset_output: Any) -> None:
         split_cfg = self.config["split"]
@@ -97,8 +65,12 @@ class ExperimentOrchestrator:
             raise ValueError("Streaming mode currently supports only split.type='sentence'.")
 
         router_cfg = self.config.get("router", {})
-        if router_cfg.get("enabled", False):
-            raise ValueError("Streaming mode currently requires router.enabled=false.")
+        router_enabled = bool(router_cfg.get("enabled", False))
+        router = None
+        if router_enabled:
+            router_name = str(router_cfg.get("name", "default"))
+            print(f"[INFO] Running router in streaming mode: {router_name}")
+            router = RouterFactory.create(router_name)
 
         splitter = SplitterFactory.create(split_type)
         if not hasattr(splitter, "build_streaming_components") or not hasattr(splitter, "split_document_streaming"):
@@ -129,7 +101,13 @@ class ExperimentOrchestrator:
             dataset=validated_chunk_cfg["dataset"],
             yaml_name=validated_chunk_cfg["yaml_name"],
         )
-        self.artifacts.routed_output = {"metadata": {"streaming": True}}
+        self.artifacts.routed_output = {
+            "metadata": {
+                "streaming": True,
+                "router_enabled": router_enabled,
+                "router_name": router_cfg.get("name", "default") if router_enabled else "no-routing",
+            }
+        }
 
         intrinsic_cfg = self.config.get("evaluation", {})
         intrinsic_enabled = intrinsic_cfg.get("intrinsic", True)
@@ -188,13 +166,7 @@ class ExperimentOrchestrator:
         stream_embedding_cfg["log_embedding_calls"] = False
 
         doc_iter = enumerate(self._iter_documents_from_normalized(dataset_output))
-        while next_doc_idx > 0:
-            try:
-                doc_idx, _doc = next(doc_iter)
-            except StopIteration:
-                break
-            if doc_idx + 1 >= next_doc_idx:
-                break
+        self._advance_document_iterator(doc_iter, next_doc_idx)
 
         final_index_output = None
         final_intrinsic_output = None
@@ -212,203 +184,58 @@ class ExperimentOrchestrator:
                 f"start_doc={next_doc_idx}, end_doc={end_doc_idx_exclusive}, total_docs={expected_docs}"
             )
 
-            if intrinsic_enabled:
-                intrinsic_runtime = self._init_streaming_intrinsic_runtime(intrinsic_cfg)
-                persisted_intrinsic = stream_state.get("intrinsic_runtime", {})
-                if isinstance(persisted_intrinsic, dict):
-                    intrinsic_runtime["bc_sum"] += float(persisted_intrinsic.get("bc_sum", 0.0))
-                    intrinsic_runtime["bc_count"] += int(persisted_intrinsic.get("bc_count", 0))
-                    intrinsic_runtime["csc_sum"] += float(persisted_intrinsic.get("csc_sum", 0.0))
-                    intrinsic_runtime["csc_count"] += int(persisted_intrinsic.get("csc_count", 0))
-                    intrinsic_runtime["csi_sum"] += float(persisted_intrinsic.get("csi_sum", 0.0))
-                    intrinsic_runtime["csi_count"] += int(persisted_intrinsic.get("csi_count", 0))
-                    intrinsic_runtime["num_documents"] += int(persisted_intrinsic.get("num_documents", 0))
-                    intrinsic_runtime["num_chunks"] += int(persisted_intrinsic.get("num_chunks", 0))
-            else:
-                intrinsic_runtime = None
-
-            if retrieval_cfg.get("enabled", True):
-                retriever_name = retrieval_cfg.get("name", "faiss")
-                print(f"[INFO] Building retrieval index (streaming): {retriever_name}")
-                retriever = RetrieverFactory.create(retriever_name)
-                retrieval_cfg_for_stream = dict(retrieval_cfg)
-                retrieval_cfg_for_stream["_stream_resume"] = next_doc_idx > 0
-                retriever.start_incremental_index(retrieval_cfg_for_stream, self.config)
-                embedder = EmbedderFactory.create(self.config["embedding"]["name"])
-            else:
-                retriever = None
-                embedder = None
-
-            window_target_docs = max(0, end_doc_idx_exclusive - next_doc_idx)
-            window_doc_ids: list[str] = []
-            temp_dir = stream_state_path.parent / ".stream_tmp"
-            temp_dir.mkdir(parents=True, exist_ok=True)
-            window_split_tmp = temp_dir / f"split_{next_doc_idx}_{end_doc_idx_exclusive}.jsonl"
-            window_chunks_tmp = temp_dir / f"chunks_{next_doc_idx}_{end_doc_idx_exclusive}.jsonl"
-            if window_split_tmp.exists():
-                window_split_tmp.unlink()
-            if window_chunks_tmp.exists():
-                window_chunks_tmp.unlink()
-
-            split_progress = tqdm(
-                total=window_target_docs,
-                desc="Split (streaming)",
-                unit="doc",
-                dynamic_ncols=True,
-                miniters=1,
+            intrinsic_runtime = self._build_intrinsic_runtime_for_window(
+                intrinsic_enabled=intrinsic_enabled,
+                intrinsic_cfg=intrinsic_cfg,
+                stream_state=stream_state,
             )
-            try:
-                while len(window_doc_ids) < window_target_docs:
-                    try:
-                        _doc_idx, doc = next(doc_iter)
-                    except StopIteration:
-                        break
+            retriever, embedder = self._start_window_retrieval(
+                retrieval_cfg=retrieval_cfg,
+                next_doc_idx=next_doc_idx,
+            )
+            window_paths = self._prepare_window_paths(
+                stream_state_path=stream_state_path,
+                next_doc_idx=next_doc_idx,
+                end_doc_idx_exclusive=end_doc_idx_exclusive,
+            )
 
-                    doc_id = str(doc.get("id", ""))
-                    text = str(doc.get("text", ""))
-                    if not doc_id:
-                        continue
-
-                    total_docs += 1
-                    units, next_unit_id = splitter.split_document_streaming(
-                        doc_id=doc_id,
-                        text=text,
-                        unit_id_start=next_unit_id,
-                        nlp=split_components["nlp"],
-                        max_chars_per_batch=split_components["max_chars_per_batch"],
-                    )
-                    total_units += len(units)
-                    if split_save_output and split_path_obj is not None and units:
-                        self._append_jsonl_rows(split_path_obj, units)
-                    if units:
-                        self._append_jsonl_rows(window_split_tmp, units)
-
-                    window_doc_ids.append(doc_id)
-                    split_progress.update(1)
-                    split_progress.set_postfix(
-                        doc=doc_id,
-                        doc_units=len(units),
-                        total_units=total_units,
-                        refresh=True,
-                    )
-            finally:
-                split_progress.close()
+            window_doc_ids, next_unit_id, total_docs, total_units = self._run_split_window(
+                doc_iter=doc_iter,
+                splitter=splitter,
+                split_components=split_components,
+                next_unit_id=next_unit_id,
+                split_save_output=split_save_output,
+                split_path_obj=split_path_obj,
+                window_paths=window_paths,
+                next_doc_idx=next_doc_idx,
+                end_doc_idx_exclusive=end_doc_idx_exclusive,
+                total_docs=total_docs,
+                total_units=total_units,
+            )
 
             current_window_docs = len(window_doc_ids)
-
-            chunk_progress = tqdm(
-                total=current_window_docs,
-                desc="Chunking (streaming)",
-                unit="doc",
-                dynamic_ncols=True,
-                miniters=1,
+            window_chunk_count, total_chunks = self._run_chunking_window(
+                chunker=chunker,
+                validated_chunk_cfg=validated_chunk_cfg,
+                run_dir=run_dir,
+                window_paths=window_paths,
+                window_doc_ids=window_doc_ids,
+                router=router,
+                router_cfg=router_cfg,
+                split_type=split_type,
+                split_components=split_components,
+                intrinsic_runtime=intrinsic_runtime,
+                total_chunks=total_chunks,
             )
-            try:
-                units_iter = (
-                    iter(self._iter_split_units_grouped_by_doc(window_split_tmp))
-                    if window_split_tmp.exists()
-                    else iter(())
-                )
-                next_units_pair = next(units_iter, None)
-                window_chunk_count = 0
 
-                for doc_id in window_doc_ids:
-                    if next_units_pair is not None and next_units_pair[0] == doc_id:
-                        units = next_units_pair[1]
-                        next_units_pair = next(units_iter, None)
-                    else:
-                        units = []
-                    grouped = {doc_id: units}
-                    if hasattr(chunker, "ensure_semantic_embeddings"):
-                        chunker.ensure_semantic_embeddings(
-                            split_units=units,
-                            grouped_units=grouped,
-                            config=validated_chunk_cfg,
-                            split_path=None,
-                        )
-                    chunks, _ = chunker.chunk_grouped_units(grouped, validated_chunk_cfg)
-                    total_chunks += len(chunks)
-                    window_chunk_count += len(chunks)
-                    if validated_chunk_cfg.get("save_chunks", False):
-                        chunker.save_run_chunks(run_dir=run_dir, grouped_chunks=chunks, config=validated_chunk_cfg)
-                    if intrinsic_runtime is not None:
-                        self._update_streaming_intrinsic_runtime(intrinsic_runtime, doc_id=doc_id, chunks=chunks)
-                    if chunks:
-                        self._append_jsonl_rows(window_chunks_tmp, chunks)
-
-                    chunk_progress.update(1)
-                    chunk_progress.set_postfix(
-                        doc=doc_id,
-                        doc_chunks=len(chunks),
-                        total_chunks=total_chunks,
-                        refresh=True,
-                    )
-            finally:
-                chunk_progress.close()
-                if window_split_tmp.exists():
-                    window_split_tmp.unlink()
-
-            if retriever is not None and embedder is not None:
-                index_progress = tqdm(
-                    total=window_chunk_count,
-                    desc="Embedding+Index (streaming)",
-                    unit="chunk",
-                    dynamic_ncols=True,
-                    miniters=1,
-                )
-                try:
-                    if window_chunks_tmp.exists():
-                        batch_size = int(stream_embedding_cfg.get("batch_size", 32))
-                        if batch_size <= 0:
-                            batch_size = 32
-
-                        batch_chunks: list[dict[str, Any]] = []
-                        batch_texts: list[str] = []
-                        last_doc_id = ""
-                        with window_chunks_tmp.open("r", encoding="utf-8") as f:
-                            for line in f:
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                chunk = json.loads(line)
-                                doc_id = str(chunk.get("doc_id", ""))
-                                text = str(chunk.get("text", "")).strip()
-                                last_doc_id = doc_id or last_doc_id
-                                if text:
-                                    batch_chunks.append(chunk)
-                                    batch_texts.append(text)
-
-                                index_progress.update(1)
-
-                                if len(batch_texts) >= batch_size:
-                                    vectors, emb_metadata = embedder.encode_texts(batch_texts, stream_embedding_cfg)
-                                    items_for_index = [self._serialize_chunk_item_for_index(chunk_item) for chunk_item in batch_chunks]
-                                    retriever.add_embeddings_batch(vectors, items_for_index, emb_metadata)
-                                    total_index_items += len(items_for_index)
-                                    batch_chunks.clear()
-                                    batch_texts.clear()
-                                    index_progress.set_postfix(
-                                        doc=last_doc_id,
-                                        index_items=total_index_items,
-                                        refresh=True,
-                                    )
-
-                        if batch_texts:
-                            vectors, emb_metadata = embedder.encode_texts(batch_texts, stream_embedding_cfg)
-                            items_for_index = [self._serialize_chunk_item_for_index(chunk_item) for chunk_item in batch_chunks]
-                            retriever.add_embeddings_batch(vectors, items_for_index, emb_metadata)
-                            total_index_items += len(items_for_index)
-                            index_progress.set_postfix(
-                                doc=last_doc_id,
-                                index_items=total_index_items,
-                                refresh=True,
-                            )
-                finally:
-                    index_progress.close()
-                    if window_chunks_tmp.exists():
-                        window_chunks_tmp.unlink()
-            elif window_chunks_tmp.exists():
-                window_chunks_tmp.unlink()
+            total_index_items = self._run_indexing_window(
+                window_paths=window_paths,
+                retriever=retriever,
+                embedder=embedder,
+                stream_embedding_cfg=stream_embedding_cfg,
+                window_chunk_count=window_chunk_count,
+                total_index_items=total_index_items,
+            )
 
             if retriever is not None:
                 final_index_output = retriever.finalize_incremental_index()
@@ -486,7 +313,6 @@ class ExperimentOrchestrator:
             if final_index_output is not None:
                 self._run_extrinsic_evaluation(
                     chunk_output=chunk_output,
-                    embedding_output=None,
                     index_output=final_index_output,
                 )
             else:
@@ -500,6 +326,365 @@ class ExperimentOrchestrator:
                 f"Progress: next_doc_idx={next_doc_idx}/{expected_docs}. "
                 "Extrinsic evaluation deferred until completion."
             )
+
+    @staticmethod
+    def _advance_document_iterator(doc_iter: Any, next_doc_idx: int) -> None:
+        while next_doc_idx > 0:
+            try:
+                doc_idx, _doc = next(doc_iter)
+            except StopIteration:
+                break
+            if doc_idx + 1 >= next_doc_idx:
+                break
+
+    def _build_intrinsic_runtime_for_window(
+        self,
+        *,
+        intrinsic_enabled: bool,
+        intrinsic_cfg: dict[str, Any],
+        stream_state: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not intrinsic_enabled:
+            return None
+
+        intrinsic_runtime = self._init_streaming_intrinsic_runtime(intrinsic_cfg)
+        persisted_intrinsic = stream_state.get("intrinsic_runtime", {})
+        if isinstance(persisted_intrinsic, dict):
+            intrinsic_runtime["bc_sum"] += float(persisted_intrinsic.get("bc_sum", 0.0))
+            intrinsic_runtime["bc_count"] += int(persisted_intrinsic.get("bc_count", 0))
+            intrinsic_runtime["csc_sum"] += float(persisted_intrinsic.get("csc_sum", 0.0))
+            intrinsic_runtime["csc_count"] += int(persisted_intrinsic.get("csc_count", 0))
+            intrinsic_runtime["csi_sum"] += float(persisted_intrinsic.get("csi_sum", 0.0))
+            intrinsic_runtime["csi_count"] += int(persisted_intrinsic.get("csi_count", 0))
+            intrinsic_runtime["num_documents"] += int(persisted_intrinsic.get("num_documents", 0))
+            intrinsic_runtime["num_chunks"] += int(persisted_intrinsic.get("num_chunks", 0))
+        return intrinsic_runtime
+
+    def _start_window_retrieval(
+        self,
+        *,
+        retrieval_cfg: dict[str, Any],
+        next_doc_idx: int,
+    ) -> tuple[Any | None, Any | None]:
+        if not retrieval_cfg.get("enabled", True):
+            return None, None
+
+        retriever_name = retrieval_cfg.get("name", "faiss")
+        print(f"[INFO] Building retrieval index (streaming): {retriever_name}")
+        retriever = RetrieverFactory.create(retriever_name)
+        retrieval_cfg_for_stream = dict(retrieval_cfg)
+        retrieval_cfg_for_stream["_stream_resume"] = next_doc_idx > 0
+        retriever.start_incremental_index(retrieval_cfg_for_stream, self.config)
+        embedder = EmbedderFactory.create(self.config["embedding"]["name"])
+        return retriever, embedder
+
+    @staticmethod
+    def _prepare_window_paths(
+        *,
+        stream_state_path: Path,
+        next_doc_idx: int,
+        end_doc_idx_exclusive: int,
+    ) -> StreamingWindowPaths:
+        temp_dir = stream_state_path.parent / ".stream_tmp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        split_tmp = temp_dir / f"split_{next_doc_idx}_{end_doc_idx_exclusive}.jsonl"
+        chunks_tmp = temp_dir / f"chunks_{next_doc_idx}_{end_doc_idx_exclusive}.jsonl"
+        if split_tmp.exists():
+            split_tmp.unlink()
+        if chunks_tmp.exists():
+            chunks_tmp.unlink()
+        return StreamingWindowPaths(split_tmp=split_tmp, chunks_tmp=chunks_tmp)
+
+    def _run_split_window(
+        self,
+        *,
+        doc_iter: Any,
+        splitter: Any,
+        split_components: dict[str, Any],
+        next_unit_id: int,
+        split_save_output: bool,
+        split_path_obj: Path | None,
+        window_paths: StreamingWindowPaths,
+        next_doc_idx: int,
+        end_doc_idx_exclusive: int,
+        total_docs: int,
+        total_units: int,
+    ) -> tuple[list[str], int, int, int]:
+        window_target_docs = max(0, end_doc_idx_exclusive - next_doc_idx)
+        window_doc_ids: list[str] = []
+        split_progress = tqdm(
+            total=window_target_docs,
+            desc="Split (streaming)",
+            unit="doc",
+            dynamic_ncols=True,
+            miniters=1,
+        )
+        try:
+            while len(window_doc_ids) < window_target_docs:
+                try:
+                    _doc_idx, doc = next(doc_iter)
+                except StopIteration:
+                    break
+
+                doc_id = str(doc.get("id", ""))
+                text = str(doc.get("text", ""))
+                if not doc_id:
+                    continue
+
+                total_docs += 1
+                units, next_unit_id = splitter.split_document_streaming(
+                    doc_id=doc_id,
+                    text=text,
+                    unit_id_start=next_unit_id,
+                    nlp=split_components["nlp"],
+                    max_chars_per_batch=split_components["max_chars_per_batch"],
+                )
+                total_units += len(units)
+                if split_save_output and split_path_obj is not None and units:
+                    self._append_jsonl_rows(split_path_obj, units)
+                if units:
+                    self._append_jsonl_rows(window_paths.split_tmp, units)
+
+                window_doc_ids.append(doc_id)
+                split_progress.update(1)
+                split_progress.set_postfix(
+                    doc=doc_id,
+                    doc_units=len(units),
+                    total_units=total_units,
+                    refresh=True,
+                )
+        finally:
+            split_progress.close()
+
+        return window_doc_ids, next_unit_id, total_docs, total_units
+
+    def _run_chunking_window(
+        self,
+        *,
+        chunker: Any,
+        validated_chunk_cfg: dict[str, Any],
+        run_dir: Path,
+        window_paths: StreamingWindowPaths,
+        window_doc_ids: list[str],
+        router: Any | None,
+        router_cfg: dict[str, Any],
+        split_type: str,
+        split_components: dict[str, Any],
+        intrinsic_runtime: dict[str, Any] | None,
+        total_chunks: int,
+    ) -> tuple[int, int]:
+        chunk_progress = tqdm(
+            total=len(window_doc_ids),
+            desc="Chunking (streaming)",
+            unit="doc",
+            dynamic_ncols=True,
+            miniters=1,
+        )
+        try:
+            units_iter = (
+                iter(self._iter_split_units_grouped_by_doc(window_paths.split_tmp))
+                if window_paths.split_tmp.exists()
+                else iter(())
+            )
+            next_units_pair = next(units_iter, None)
+            window_chunk_count = 0
+
+            for doc_id in window_doc_ids:
+                if next_units_pair is not None and next_units_pair[0] == doc_id:
+                    units = next_units_pair[1]
+                    next_units_pair = next(units_iter, None)
+                else:
+                    units = []
+
+                routed_units = self._run_router_window(
+                    units=units,
+                    doc_id=doc_id,
+                    router=router,
+                    router_cfg=router_cfg,
+                    split_type=split_type,
+                    split_components=split_components,
+                )
+                grouped = chunker.group_split_units(routed_units)
+                if hasattr(chunker, "ensure_semantic_embeddings"):
+                    chunker.ensure_semantic_embeddings(
+                        split_units=routed_units,
+                        grouped_units=grouped,
+                        config=validated_chunk_cfg,
+                        split_path=None,
+                    )
+                chunks, _ = chunker.chunk_grouped_units(grouped, validated_chunk_cfg)
+                total_chunks += len(chunks)
+                window_chunk_count += len(chunks)
+                if validated_chunk_cfg.get("save_chunks", False):
+                    chunker.save_run_chunks(run_dir=run_dir, grouped_chunks=chunks, config=validated_chunk_cfg)
+                if intrinsic_runtime is not None:
+                    self._update_streaming_intrinsic_runtime(intrinsic_runtime, doc_id=doc_id, chunks=chunks)
+                if chunks:
+                    self._append_jsonl_rows(window_paths.chunks_tmp, chunks)
+
+                chunk_progress.update(1)
+                chunk_progress.set_postfix(
+                    doc=doc_id,
+                    doc_chunks=len(chunks),
+                    total_chunks=total_chunks,
+                    refresh=True,
+                )
+        finally:
+            chunk_progress.close()
+            if window_paths.split_tmp.exists():
+                window_paths.split_tmp.unlink()
+
+        return window_chunk_count, total_chunks
+
+    def _run_router_window(
+        self,
+        *,
+        units: list[dict[str, Any]],
+        doc_id: str,
+        router: Any | None,
+        router_cfg: dict[str, Any],
+        split_type: str,
+        split_components: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        # Placeholder stage for future window-level routing policies.
+        # For now, routing remains document-level and reuses the existing logic.
+        return self._route_units_for_streaming_doc(
+            units=units,
+            doc_id=doc_id,
+            router=router,
+            router_cfg=router_cfg,
+            split_type=split_type,
+            split_components=split_components,
+        )
+
+    def _route_units_for_streaming_doc(
+        self,
+        *,
+        units: list[dict[str, Any]],
+        doc_id: str,
+        router: Any | None,
+        router_cfg: dict[str, Any],
+        split_type: str,
+        split_components: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        if router is None:
+            return units
+
+        routed_output = router.route(
+            {
+                "split_units": units,
+                "documents": [{"doc_id": doc_id, "num_sentences": len(units)}],
+                "metadata": {
+                    "split_type": split_type,
+                    "spacy_model": split_components["model_name"],
+                    "streaming": True,
+                },
+            },
+            router_cfg,
+        )
+        if not isinstance(routed_output, dict) or not isinstance(routed_output.get("split_units"), list):
+            raise TypeError("Router output must be a dict containing 'split_units' list.")
+        return routed_output["split_units"]
+
+    def _run_indexing_window(
+        self,
+        *,
+        window_paths: StreamingWindowPaths,
+        retriever: Any | None,
+        embedder: Any | None,
+        stream_embedding_cfg: dict[str, Any],
+        window_chunk_count: int,
+        total_index_items: int,
+    ) -> int:
+        if retriever is None or embedder is None:
+            if window_paths.chunks_tmp.exists():
+                window_paths.chunks_tmp.unlink()
+            return total_index_items
+
+        index_progress = tqdm(
+            total=window_chunk_count,
+            desc="Embedding+Index (streaming)",
+            unit="chunk",
+            dynamic_ncols=True,
+            miniters=1,
+        )
+        try:
+            if window_paths.chunks_tmp.exists():
+                batch_size = int(stream_embedding_cfg.get("batch_size", 32))
+                if batch_size <= 0:
+                    batch_size = 32
+
+                batch_chunks: list[dict[str, Any]] = []
+                batch_texts: list[str] = []
+                last_doc_id = ""
+                with window_paths.chunks_tmp.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        chunk = json.loads(line)
+                        doc_id = str(chunk.get("doc_id", ""))
+                        text = str(chunk.get("text", "")).strip()
+                        last_doc_id = doc_id or last_doc_id
+                        if text:
+                            batch_chunks.append(chunk)
+                            batch_texts.append(text)
+
+                        index_progress.update(1)
+
+                        if len(batch_texts) >= batch_size:
+                            total_index_items = self._flush_embedding_batch(
+                                retriever=retriever,
+                                embedder=embedder,
+                                texts=batch_texts,
+                                chunks=batch_chunks,
+                                stream_embedding_cfg=stream_embedding_cfg,
+                                total_index_items=total_index_items,
+                                index_progress=index_progress,
+                                last_doc_id=last_doc_id,
+                            )
+
+                if batch_texts:
+                    total_index_items = self._flush_embedding_batch(
+                        retriever=retriever,
+                        embedder=embedder,
+                        texts=batch_texts,
+                        chunks=batch_chunks,
+                        stream_embedding_cfg=stream_embedding_cfg,
+                        total_index_items=total_index_items,
+                        index_progress=index_progress,
+                        last_doc_id=last_doc_id,
+                    )
+        finally:
+            index_progress.close()
+            if window_paths.chunks_tmp.exists():
+                window_paths.chunks_tmp.unlink()
+        return total_index_items
+
+    def _flush_embedding_batch(
+        self,
+        *,
+        retriever: Any,
+        embedder: Any,
+        texts: list[str],
+        chunks: list[dict[str, Any]],
+        stream_embedding_cfg: dict[str, Any],
+        total_index_items: int,
+        index_progress: Any,
+        last_doc_id: str,
+    ) -> int:
+        vectors, emb_metadata = embedder.encode_texts(texts, stream_embedding_cfg)
+        items_for_index = [self._serialize_chunk_item_for_index(chunk_item) for chunk_item in chunks]
+        retriever.add_embeddings_batch(vectors, items_for_index, emb_metadata)
+        total_index_items += len(items_for_index)
+        texts.clear()
+        chunks.clear()
+        index_progress.set_postfix(
+            doc=last_doc_id,
+            index_items=total_index_items,
+            refresh=True,
+        )
+        return total_index_items
 
     def _run_dataset_processing(self) -> Any:
         dataset_cfg = dict(self.config["dataset"])
@@ -528,131 +713,6 @@ class ExperimentOrchestrator:
 
         data = processor.build_from_raw(dataset_cfg)
         return processor.finalize_raw_data(data, dataset_cfg)
-
-    def _run_split(self, dataset_output: Any) -> Any:
-        split_cfg = self.config["split"]
-        split_type = split_cfg["type"]
-
-        print(f"[INFO] Running split: {split_type}")
-        splitter = SplitterFactory.create(split_type)
-        if self._should_force_rebuild("split"):
-            print("[INFO] Split reuse disabled by execution policy: recomputing split.")
-            split_output = splitter.split(dataset_output, split_cfg)
-            splitter.save_output(split_output, split_cfg)
-            return split_output
-
-        if self._should_allow_reuse("split"):
-            reusable_output = splitter.try_load_reusable_output(dataset_output, split_cfg)
-            if reusable_output is not None:
-                return reusable_output
-        else:
-            print("[INFO] Split reuse disabled by execution policy: skipping saved split shortcut.")
-
-        split_output = splitter.split(dataset_output, split_cfg)
-        splitter.save_output(split_output, split_cfg)
-        return split_output
-
-    def _run_router_if_needed(self, split_output: Any) -> Any:
-        split_type = self.config["split"]["type"]
-        router_cfg = self.config.get("router", {})
-        router_enabled = router_cfg.get("enabled", False)
-
-        if split_type == "proposition":
-            print("[INFO] Proposition split selected: skipping router.")
-            return split_output
-
-        if not router_enabled:
-            print("[INFO] Router disabled: skipping router.")
-            return split_output
-
-        router_name = router_cfg["name"]
-        print(f"[INFO] Running router: {router_name}")
-        router = RouterFactory.create(router_name)
-        return router.route(split_output, router_cfg)
-
-    def _run_chunking(self, routed_output: Any) -> Any:
-        chunking_cfg = dict(self.config["chunking"])
-        embedding_cfg = self.config.get("embedding", {})
-        if isinstance(embedding_cfg.get("name"), str) and embedding_cfg["name"].strip():
-            chunking_cfg.setdefault("embedding_model", embedding_cfg["name"].strip())
-        if isinstance(embedding_cfg.get("show_progress_bar"), bool):
-            chunking_cfg.setdefault(
-                "show_embedding_progress",
-                embedding_cfg["show_progress_bar"],
-            )
-        if self.config_path is not None:
-            chunking_cfg.setdefault("yaml_name", self.config_path.name)
-        else:
-            chunking_cfg.setdefault("yaml_name", self.config.get("experiment_name"))
-        chunking_type = chunking_cfg["type"]
-
-        print(f"[INFO] Running chunking: {chunking_type}")
-        chunker = ChunkerFactory.create(chunking_type)
-        if not hasattr(chunker, "prepare_chunking_inputs"):
-            return chunker.chunk(routed_output, chunking_cfg)
-
-        prepared = chunker.prepare_chunking_inputs(routed_output, chunking_cfg)
-
-        if self._should_force_rebuild("chunking"):
-            print("[INFO] Chunk reuse disabled by execution policy: recomputing chunks.")
-            chunk_output = chunker.compute_chunk_output(prepared)
-            chunker.save_output(chunk_output, prepared)
-            return chunk_output
-
-        if self._should_allow_reuse("chunking"):
-            reusable_output = chunker.try_load_reusable_output(prepared)
-            if reusable_output is not None:
-                return reusable_output
-        else:
-            print("[INFO] Chunk reuse disabled by execution policy: skipping chunk cache shortcut.")
-
-        chunk_output = chunker.compute_chunk_output(prepared)
-        chunker.save_output(chunk_output, prepared)
-        return chunk_output
-
-    def _run_intrinsic_evaluation(self, chunk_output: Any) -> Any:
-        eval_cfg = self.config.get("evaluation", {})
-        intrinsic_enabled = eval_cfg.get("intrinsic", True)
-
-        if not intrinsic_enabled:
-            print("[INFO] Intrinsic evaluation disabled.")
-            return None
-
-        intrinsic_name = eval_cfg.get("intrinsic_evaluator", "default")
-        print(f"[INFO] Running intrinsic evaluation: {intrinsic_name}")
-        evaluator = IntrinsicEvaluatorFactory.create(intrinsic_name)
-        intrinsic_cfg = dict(eval_cfg)
-        intrinsic_cfg["_run_context"] = {
-            "dataset": self.config.get("dataset", {}),
-            "chunking": self.config.get("chunking", {}),
-            "router": self.config.get("router", {}),
-            "experiment_name": self.config.get("experiment_name"),
-            "experiment": self.config.get("experiment", {}),
-            "config_path": str(self.config_path) if self.config_path is not None else None,
-        }
-        return evaluator.evaluate(chunk_output, intrinsic_cfg)
-
-    def _run_embedding(self, chunk_output: Any) -> Any:
-        embedding_cfg = self.config["embedding"]
-        embedder_name = embedding_cfg["name"]
-
-        print(f"[INFO] Running embedder: {embedder_name}")
-        embedder = EmbedderFactory.create(embedder_name)
-        return embedder.embed(chunk_output, embedding_cfg)
-
-    def _run_indexing(self, embedding_output: Any) -> Any:
-        retrieval_cfg = self.config.get("retrieval", {})
-        index_enabled = retrieval_cfg.get("enabled", True)
-
-        if not index_enabled:
-            print("[INFO] Indexing disabled.")
-            return None
-
-        retriever_name = retrieval_cfg.get("name", "faiss")
-        print(f"[INFO] Building retrieval index: {retriever_name}")
-
-        retriever = RetrieverFactory.create(retriever_name)
-        return retriever.build_index(embedding_output, retrieval_cfg, self.config)
 
     def _find_reusable_index(self, chunk_output: Any) -> Optional[Dict[str, Any]]:
         retrieval_cfg = self.config.get("retrieval", {})
@@ -1078,7 +1138,7 @@ class ExperimentOrchestrator:
             "num_chunks": int(runtime.get("num_chunks", 0)),
         }
 
-    def _run_extrinsic_evaluation(self, chunk_output: Any, embedding_output: Any, index_output: Any) -> None:
+    def _run_extrinsic_evaluation(self, chunk_output: Any, index_output: Any) -> None:
         eval_cfg = self.config.get("evaluation", {})
         extrinsic_enabled = eval_cfg.get("extrinsic", True)
 

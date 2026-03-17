@@ -3,6 +3,7 @@ experiment_name: "baseline_pipeline"
 execution:
   streaming: true
   streaming_docs_per_run: 100000
+  streaming_run_until_complete: true
 
 dataset:
   name: "msmarco"
@@ -84,4 +85,3 @@ evaluation:
       answers_path: data/normalized/beir/msmarco/answers.json
       generation_model:
         name: dummy-msmarco-model
-

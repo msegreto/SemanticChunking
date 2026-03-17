@@ -3,6 +3,7 @@
 Framework modulare per esperimenti di chunking, embedding, retrieval e valutazione su dataset BEIR e MSMARCO.
 
 Il flusso principale parte da `scripts/run_pipeline.py`, legge una configurazione in `configs/experiments/` e orchestra i moduli sotto `src/`.
+L'orchestrator attuale esegue il pipeline in modalità streaming incrementale (window-based).
 
 Cartelle principali:
 - `configs/`: configurazioni degli esperimenti.
