@@ -91,7 +91,8 @@ class BaseSemanticChunker(BaseChunker):
         return {
             "batch_size": config["embedding_batch_size"],
             "normalize_embeddings": True,
-            "show_progress_bar": config["show_embedding_progress"],
+            # Keep semantic chunking quiet: global pipeline progress bars are shown by orchestrator.
+            "show_progress_bar": False,
             "convert_to_numpy": True,
             "log_embedding_calls": False,
         }

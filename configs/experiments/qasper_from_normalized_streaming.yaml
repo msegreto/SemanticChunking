@@ -1,35 +1,49 @@
-experiment_name: "baseline_pipeline"
+experiment_name: "qasper_normalized_pipeline_streaming"
 
 execution:
   streaming: true
-  streaming_docs_per_run: 100000
+  streaming_docs_per_run: 100
+  allow_reuse: true
+  force_rebuild: false
+  stages:
+    dataset:
+      allow_reuse: true
+      force_rebuild: false
+    split:
+      allow_reuse: true
+      force_rebuild: false
+    chunking:
+      allow_reuse: true
+      force_rebuild: false
+    retrieval:
+      allow_reuse: true
+      force_rebuild: false
 
 dataset:
-  name: "msmarco"
-  data_dir: "data/raw/msmarco"
-  split: "dev"
-  download_if_missing: true
-  include_lookup: false
-  extract_archives: false
+  name: "beir/qasper"
+  normalized_dir: "data/normalized/beir/qasper"
+  split: "test"
+  download_if_missing: false
   use_normalized_if_available: true
-  save_normalized: true
-
+  save_normalized: false
+  required_extrinsic_tasks: [document_retrieval, evidence_retrieval, answer_generation]
 
 split:
+  split:
   type: sentence
   model: en_core_web_sm
   save_output: true
-  output_path: data/processed/msmarco/sentences.jsonl
+  output_path: data/processed/qasper/sentences.jsonl
 
 router:
   enabled: false
   name: "moc"
 
 chunking:
-  type: fixed
-  dataset: msmarco
-  n_chunks: 3
-  overlap_sentences: 0
+  type: semantic_breakpoint
+  dataset: qasper
+  # n_chunks: 3
+  # overlap_sentences: 0
   save_chunks: false
 
 embedding:
@@ -63,7 +77,7 @@ evaluation:
 
   save:
     enabled: true
-    yaml_name: msmarco_intrinsic_results
+    yaml_name: qasper_intrinsic_results
 
   extrinsic: true
   extrinsic_evaluator: document_retrieval
@@ -72,16 +86,15 @@ evaluation:
   extrinsic_tasks:
     document_retrieval:
       ks: [1, 3, 5, 10]
-      normalized_dataset_dir: data/normalized/beir/msmarco
-      split: dev
+      normalized_dataset_dir: data/normalized/beir/qasper
+      split: test
       query_sample_size: 100
       query_sample_seed: 42
     evidence_retrieval:
       ks: [1, 3, 5, 10]
-      evidence_path: data/normalized/beir/msmarco/evidences.json
+      evidence_path: data/normalized/beir/qasper/evidences.json
     answer_generation:
       ks: [1, 3, 5, 10]
-      answers_path: data/normalized/beir/msmarco/answers.json
+      answers_path: data/normalized/beir/qasper/answers.json
       generation_model:
-        name: dummy-msmarco-model
-
+        name: dummy-qasper-model

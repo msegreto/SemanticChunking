@@ -5,7 +5,6 @@ from typing import Any
 
 import numpy as np
 from sklearn.cluster import DBSCAN
-from tqdm.auto import tqdm
 
 from src.chunking.semantic_base import BaseSemanticChunker
 from src.chunking.semantic_utils import (
@@ -128,14 +127,7 @@ class SemanticClusteringChunker(BaseSemanticChunker):
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         all_chunks: list[dict[str, Any]] = []
         grouped_chunks: list[tuple[str, list[dict[str, Any]]]] = []
-        progress = tqdm(
-            grouped_units.items(),
-            total=len(grouped_units),
-            desc=f"Semantic clustering ({config['clustering_mode']}, {config['embedding_model']})",
-            unit="doc",
-        )
-
-        for doc_id, units in progress:
+        for doc_id, units in grouped_units.items():
             ordered_units = self.ordered_units(units)
             chunks = self._build_document_chunks(
                 doc_id=doc_id,

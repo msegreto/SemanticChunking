@@ -10,7 +10,6 @@ from langchain_experimental.text_splitter import (
     calculate_cosine_distances,
     combine_sentences,
 )
-from tqdm.auto import tqdm
 
 from src.chunking.semantic_base import BaseSemanticChunker
 from src.chunking.semantic_utils import (
@@ -147,14 +146,7 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         all_chunks: list[dict[str, Any]] = []
         grouped_chunks: list[tuple[str, list[dict[str, Any]]]] = []
-        progress = tqdm(
-            grouped_units.items(),
-            total=len(grouped_units),
-            desc=f"Semantic chunking ({config['embedding_model']})",
-            unit="doc",
-        )
-
-        for doc_id, units in progress:
+        for doc_id, units in grouped_units.items():
             ordered_units = self.ordered_units(units)
             chunks = self._build_breakpoint_chunks(
                 doc_id=doc_id,

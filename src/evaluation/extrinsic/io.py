@@ -6,6 +6,63 @@ from pathlib import Path
 from typing import Any
 
 
+class JsonlItemStore:
+    def __init__(self, jsonl_path: Path, *, expected_count: int | None = None) -> None:
+        self.path = Path(jsonl_path)
+        if not self.path.exists():
+            raise FileNotFoundError(f"Items JSONL not found: {self.path}")
+        self._offsets = self._load_or_build_offsets()
+        if expected_count is not None and len(self._offsets) != int(expected_count):
+            raise ValueError(
+                f"Items JSONL count mismatch: expected {expected_count}, found {len(self._offsets)} at {self.path}"
+            )
+
+    def _index_path(self) -> Path:
+        return self.path.with_suffix(self.path.suffix + ".idx")
+
+    def _load_or_build_offsets(self) -> list[int]:
+        index_path = self._index_path()
+        if index_path.exists():
+            try:
+                raw = json.loads(index_path.read_text(encoding="utf-8"))
+                if isinstance(raw, list) and all(isinstance(x, int) for x in raw):
+                    return raw
+            except Exception:
+                pass
+
+        offsets: list[int] = []
+        with self.path.open("rb") as f:
+            while True:
+                pos = f.tell()
+                line = f.readline()
+                if not line:
+                    break
+                if line.strip():
+                    offsets.append(pos)
+
+        try:
+            index_path.write_text(json.dumps(offsets), encoding="utf-8")
+        except Exception:
+            # Non-fatal: offset cache can be rebuilt.
+            pass
+        return offsets
+
+    def __len__(self) -> int:
+        return len(self._offsets)
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        if idx < 0:
+            idx = len(self._offsets) + idx
+        if idx < 0 or idx >= len(self._offsets):
+            raise IndexError(idx)
+        with self.path.open("rb") as f:
+            f.seek(self._offsets[idx])
+            line = f.readline()
+        if not line:
+            raise IndexError(idx)
+        return json.loads(line.decode("utf-8"))
+
+
 def _get_document_retrieval_cfg(config: dict[str, Any]) -> dict[str, Any]:
     return (
         config.get("evaluation", {})
@@ -185,7 +242,14 @@ def load_index_metadata(path: Path) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         raise ValueError("metadata.pkl must contain a dictionary")
     if "items" not in metadata:
-        raise ValueError("metadata.pkl does not contain 'items'")
+        jsonl_path = metadata.get("items_jsonl_path")
+        if isinstance(jsonl_path, str) and jsonl_path.strip():
+            metadata["items"] = JsonlItemStore(
+                Path(jsonl_path),
+                expected_count=metadata.get("num_items"),
+            )
+        else:
+            raise ValueError("metadata.pkl does not contain 'items' or 'items_jsonl_path'")
 
     return metadata
 
