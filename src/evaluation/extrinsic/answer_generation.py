@@ -9,7 +9,13 @@ from src.embeddings.factory import EmbedderFactory
 
 from .base import BaseExtrinsicEvaluator
 from .common import build_base_row, build_run_context
-from .io import load_answers, load_index_metadata, load_queries, resolve_queries_path
+from .io import (
+    load_answers,
+    load_index_metadata,
+    load_queries,
+    resolve_answers_path,
+    resolve_queries_path,
+)
 
 
 class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
@@ -30,8 +36,10 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
         index_metadata_path: Path,
         ks: Sequence[int],
     ) -> list[dict[str, Any]]:
-        task_cfg = config.get("evaluation", {}).get("extrinsic_tasks", {}).get(self.task_name, {})
-        answers_file = self._resolve_optional_path(task_cfg.get("answers_path"))
+        try:
+            answers_file = resolve_answers_path(config)
+        except Exception:
+            answers_file = None
 
         if not ks:
             return self._build_rows(
@@ -195,12 +203,6 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
             answers_path=str(answers_file),
             generation_model=self.GENERATION_MODEL_LABEL,
         )
-
-    @staticmethod
-    def _resolve_optional_path(value: Any) -> Path | None:
-        if isinstance(value, str) and value.strip():
-            return Path(value)
-        return None
 
     @staticmethod
     def _load_embedder(embedding_cfg: dict[str, Any]):

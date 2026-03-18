@@ -8,7 +8,13 @@ from src.embeddings.factory import EmbedderFactory
 
 from .base import BaseExtrinsicEvaluator
 from .common import build_base_row, build_run_context
-from .io import load_evidences, load_index_metadata, load_queries, resolve_queries_path
+from .io import (
+    load_evidences,
+    load_index_metadata,
+    load_queries,
+    resolve_evidence_path,
+    resolve_queries_path,
+)
 
 
 class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
@@ -24,8 +30,10 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
         index_metadata_path: Path,
         ks: Sequence[int],
     ) -> list[dict[str, Any]]:
-        task_cfg = config.get("evaluation", {}).get("extrinsic_tasks", {}).get(self.task_name, {})
-        evidence_file = self._resolve_optional_path(task_cfg.get("evidence_path"))
+        try:
+            evidence_file = resolve_evidence_path(config)
+        except Exception:
+            evidence_file = None
 
         if not ks:
             return self._build_rows(
@@ -150,12 +158,6 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
             index_metadata_path=index_metadata_path,
             evidence_path=str(evidence_file),
         )
-
-    @staticmethod
-    def _resolve_optional_path(value: Any) -> Path | None:
-        if isinstance(value, str) and value.strip():
-            return Path(value)
-        return None
 
     @staticmethod
     def _collect_retrieved_sentences(

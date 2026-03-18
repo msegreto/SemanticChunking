@@ -6,10 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-import yaml
 from tqdm.auto import tqdm
 
 from src.chunking.factory import ChunkerFactory
+from src.config.loader import load_experiment_config
 from src.datasets.factory import DatasetFactory
 from src.embeddings.factory import EmbedderFactory
 from src.evaluation.intrinsic.factory import IntrinsicEvaluatorFactory
@@ -44,8 +44,7 @@ class ExperimentOrchestrator:
 
     @classmethod
     def from_yaml(cls, config_path: Path) -> "ExperimentOrchestrator":
-        with config_path.open("r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
+        config = load_experiment_config(config_path)
         return cls(config=config, config_path=config_path)
 
     def run(self) -> None:

@@ -71,6 +71,23 @@ def _get_document_retrieval_cfg(config: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def resolve_normalized_dataset_dir(config: dict[str, Any]) -> Path | None:
+    doc_ret_cfg = _get_document_retrieval_cfg(config)
+    normalized_dataset_dir = doc_ret_cfg.get("normalized_dataset_dir")
+    if isinstance(normalized_dataset_dir, str) and normalized_dataset_dir.strip():
+        return Path(normalized_dataset_dir)
+
+    dataset_cfg = config.get("dataset", {})
+    dataset_normalized_dir = dataset_cfg.get("normalized_dir")
+    if isinstance(dataset_normalized_dir, str) and dataset_normalized_dir.strip():
+        return Path(dataset_normalized_dir)
+
+    dataset_name = dataset_cfg.get("name")
+    if isinstance(dataset_name, str) and dataset_name.strip():
+        return Path("data") / "normalized" / dataset_name
+    return None
+
+
 def check_document_retrieval_prerequisites(config: dict[str, Any]) -> tuple[bool, str]:
     try:
         queries_path = resolve_queries_path(config)
@@ -86,11 +103,9 @@ def check_document_retrieval_prerequisites(config: dict[str, Any]) -> tuple[bool
 
 
 def resolve_queries_path(config: dict[str, Any]) -> Path:
-    doc_ret_cfg = _get_document_retrieval_cfg(config)
-
-    normalized_dataset_dir = doc_ret_cfg.get("normalized_dataset_dir")
-    if normalized_dataset_dir:
-        path = Path(normalized_dataset_dir) / "queries.json"
+    normalized_dataset_dir = resolve_normalized_dataset_dir(config)
+    if normalized_dataset_dir is not None:
+        path = normalized_dataset_dir / "queries.json"
         if not path.exists():
             raise FileNotFoundError(f"Queries file not found: {path}")
         return path
@@ -128,17 +143,17 @@ def resolve_queries_path(config: dict[str, Any]) -> Path:
 
 def resolve_qrels_path(config: dict[str, Any]) -> Path:
     doc_ret_cfg = _get_document_retrieval_cfg(config)
+    dataset_cfg = config.get("dataset", {})
 
-    normalized_dataset_dir = doc_ret_cfg.get("normalized_dataset_dir")
-    split = doc_ret_cfg.get("split", "dev")
+    normalized_dataset_dir = resolve_normalized_dataset_dir(config)
+    split = doc_ret_cfg.get("split") or dataset_cfg.get("split", "dev")
 
-    if normalized_dataset_dir:
-        path = Path(normalized_dataset_dir) / "qrels" / f"{split}.json"
+    if normalized_dataset_dir is not None:
+        path = normalized_dataset_dir / "qrels" / f"{split}.json"
         if not path.exists():
             raise FileNotFoundError(f"Qrels file not found: {path}")
         return path
 
-    dataset_cfg = config.get("dataset", {})
     explicit = dataset_cfg.get("qrels_path")
     if explicit:
         path = Path(explicit)
@@ -169,6 +184,30 @@ def resolve_qrels_path(config: dict[str, Any]) -> Path:
         "Could not resolve qrels file from config. "
         "Provide normalized_dataset_dir or dataset.qrels_path."
     )
+
+
+def resolve_evidence_path(config: dict[str, Any]) -> Path:
+    task_cfg = config.get("evaluation", {}).get("extrinsic_tasks", {}).get("evidence_retrieval", {})
+    evidence_path = task_cfg.get("evidence_path")
+    if isinstance(evidence_path, str) and evidence_path.strip():
+        return Path(evidence_path)
+
+    normalized_dataset_dir = resolve_normalized_dataset_dir(config)
+    if normalized_dataset_dir is not None:
+        return normalized_dataset_dir / "evidences.json"
+    raise ValueError("Could not resolve evidence path from config.")
+
+
+def resolve_answers_path(config: dict[str, Any]) -> Path:
+    task_cfg = config.get("evaluation", {}).get("extrinsic_tasks", {}).get("answer_generation", {})
+    answers_path = task_cfg.get("answers_path")
+    if isinstance(answers_path, str) and answers_path.strip():
+        return Path(answers_path)
+
+    normalized_dataset_dir = resolve_normalized_dataset_dir(config)
+    if normalized_dataset_dir is not None:
+        return normalized_dataset_dir / "answers.json"
+    raise ValueError("Could not resolve answers path from config.")
 
 
 def load_queries(path: Path) -> dict[str, str]:

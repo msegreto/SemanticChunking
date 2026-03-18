@@ -1,0 +1,19 @@
+execution:
+  streaming: true
+  streaming_docs_per_run: 100000
+  streaming_run_until_complete: true
+  allow_reuse: false
+  force_rebuild: true
+  stages:
+    dataset:
+      allow_reuse: false
+      force_rebuild: true
+    split:
+      allow_reuse: false
+      force_rebuild: true
+    chunking:
+      allow_reuse: false
+      force_rebuild: true
+    retrieval:
+      allow_reuse: false
+      force_rebuild: true

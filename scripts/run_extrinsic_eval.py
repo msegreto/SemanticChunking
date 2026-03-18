@@ -5,11 +5,14 @@ import csv
 from pathlib import Path
 from typing import Any
 
-import yaml
-
+from src.config.loader import load_experiment_config
 from src.evaluation.extrinsic.common import build_base_row, build_run_context
 from src.evaluation.extrinsic.factory import ExtrinsicEvaluatorFactory
-from src.evaluation.extrinsic.io import check_document_retrieval_prerequisites
+from src.evaluation.extrinsic.io import (
+    check_document_retrieval_prerequisites,
+    resolve_answers_path,
+    resolve_evidence_path,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,15 +74,27 @@ def _resolve_ks_for_task(config: dict[str, Any], task_name: str) -> list[int]:
 
 
 def _check_required_task_file(
-    task_cfg: dict[str, Any],
     *,
-    key: str,
+    task_name: str,
+    config: dict[str, Any],
 ) -> tuple[bool, str]:
-    value = task_cfg.get(key)
-    if not isinstance(value, str) or not value.strip():
-        return False, f"missing {key}"
-    if not Path(value).exists():
-        label = key.replace("_path", "")
+    if task_name == "evidence_retrieval":
+        label = "evidence"
+        resolver = resolve_evidence_path
+        key = "evidence_path"
+    elif task_name == "answer_generation":
+        label = "answers"
+        resolver = resolve_answers_path
+        key = "answers_path"
+    else:
+        return False, f"unsupported task for required file check: {task_name}"
+
+    try:
+        value = resolver(config)
+    except Exception as e:
+        return False, f"missing {key}: {e}"
+
+    if not value.exists():
         return False, f"{label} file does not exist: {value}"
     return True, f"{key}={value}"
 
@@ -88,11 +103,10 @@ def _task_support_status(config: dict[str, Any], task_name: str) -> tuple[bool, 
     if task_name == "document_retrieval":
         return check_document_retrieval_prerequisites(config)
 
-    task_cfg = config.get("evaluation", {}).get("extrinsic_tasks", {}).get(task_name, {})
     if task_name == "evidence_retrieval":
-        return _check_required_task_file(task_cfg, key="evidence_path")
+        return _check_required_task_file(task_name=task_name, config=config)
     if task_name == "answer_generation":
-        return _check_required_task_file(task_cfg, key="answers_path")
+        return _check_required_task_file(task_name=task_name, config=config)
 
     return True, "no pre-check configured"
 
@@ -175,8 +189,7 @@ def main() -> None:
     args = parse_args()
 
     config_path = Path(args.config)
-    with config_path.open("r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
+    config = load_experiment_config(config_path)
 
     if not config.get("evaluation", {}).get("extrinsic", True):
         print("[INFO] Extrinsic evaluation disabled.")

@@ -30,6 +30,16 @@ Come si collega al resto del progetto:
 
 In pratica, questa cartella rappresenta il punto di configurazione centrale del framework.
 
+Nota sul refactor config: la sezione `evaluation` e' stata centralizzata in profili sotto `configs/evaluations/`.
+Nei file in `configs/experiments/` e' consigliato usare:
+- `evaluation_profile: <nome_profilo>`
+- un blocco `evaluation:` minimale solo con gli override (es. `extrinsic_tasks_to_run`, `intrinsic_model.backend`, `ks` specifici).
+
+Anche la sezione `execution` puo' essere centralizzata in profili sotto `configs/execution/`.
+Nei file esperimento e' consigliato usare:
+- `execution_profile: <nome_profilo>` (es. `default` o `force_rebuild`)
+- un blocco `execution:` minimale solo con override locali (es. `streaming_docs_per_run: 100`).
+
 ## Come costruire un YAML completo
 
 Quando crei un nuovo file in questa cartella, il modo piu' semplice e sicuro e' partire da uno YAML esistente e modificare solo le parti necessarie. In generale:
@@ -46,26 +56,11 @@ Template completo consigliato:
 
 ```yaml
 experiment_name: "nome_esperimento"
+evaluation_profile: default
+execution_profile: default
 
 execution:
-  streaming: true
   streaming_docs_per_run: 100
-  streaming_run_until_complete: true
-  allow_reuse: true
-  force_rebuild: false
-  stages:
-    dataset:
-      allow_reuse: true
-      force_rebuild: false
-    split:
-      allow_reuse: true
-      force_rebuild: false
-    chunking:
-      allow_reuse: true
-      force_rebuild: false
-    retrieval:
-      allow_reuse: true
-      force_rebuild: false
 
 dataset:
   name: "beir/fiqa"            # oppure "msmarco" / "msmarco-docs"
@@ -140,37 +135,9 @@ retrieval:
   output_dir: null             # opzionale
 
 evaluation:
-  intrinsic: true
-  intrinsic_evaluator: default
-
-  intrinsic_metrics:
-    boundary_clarity: true
-    chunk_stickiness: true
-
+  extrinsic_tasks_to_run: [document_retrieval]
   intrinsic_model:
-    backend: hf_causal_lm      # oppure lexical
-    name: sshleifer/tiny-gpt2
-    device: auto
-    max_length: 1024
-    trust_remote_code: false
-    edge_threshold: 0.8
-    sequential_delta: 1
-
-  save:
-    enabled: true
-    yaml_name: nome_output_intrinsic
-
-  extrinsic: true
-  extrinsic_evaluator: document_retrieval
-  extrinsic_script: scripts/run_extrinsic_eval.py   # opzionale
-  results_dir: results/extrinsic
-  extrinsic_tasks:
-    document_retrieval:
-      ks: [1, 3, 5, 10]
-      normalized_dataset_dir: data/normalized/beir/fiqa
-      split: dev
-      query_sample_size: 100
-      query_sample_seed: 42
+    backend: lexical           # override opzionale del profilo
 ```
 
 ## Spiegazione delle sezioni
@@ -182,6 +149,7 @@ Nome logico dell'esperimento. Viene usato nei nomi dei risultati extrinsic e com
 ### `execution`
 
 Controlla il riuso delle cache e i rebuild forzati.
+Di solito viene risolta via `execution_profile` con eventuali override locali.
 
 Campi specifici streaming:
 - `streaming_docs_per_run`: numero di documenti processati per finestra.
@@ -193,6 +161,10 @@ Campi specifici streaming:
 - `stages.<nome_fase>.force_rebuild`: override per singola fase.
 
 Le fasi oggi gestite qui sono `dataset`, `split`, `chunking` e `retrieval`.
+
+Profili pronti:
+- `execution_profile: default`
+- `execution_profile: force_rebuild`
 
 ### `dataset`
 
@@ -214,7 +186,7 @@ Per la valutazione extrinsic esistono anche i fallback:
 - `queries_path`
 - `qrels_path`
 
-Servono solo se non vuoi usare `evaluation.extrinsic_tasks.document_retrieval.normalized_dataset_dir`.
+Servono solo se non vuoi usare la risoluzione automatica su normalized dataset (`evaluation.extrinsic_tasks.document_retrieval.normalized_dataset_dir` o `dataset.normalized_dir`/`dataset.name`).
 
 ### `split`
 
@@ -307,29 +279,20 @@ L'orchestrator prova a riusare un indice esistente se trova un `manifest.json` c
 
 ### `evaluation`
 
-Contiene sia intrinsic sia extrinsic.
+Contiene sia intrinsic sia extrinsic, ma in modo tipico viene risolta come merge:
+- profilo da `evaluation_profile` (es. `configs/evaluations/default.yaml`)
+- override locali in `evaluation` nel file esperimento.
 
-Per la parte intrinsic:
-- `intrinsic`
-- `intrinsic_evaluator`
-- `intrinsic_metrics.boundary_clarity`
-- `intrinsic_metrics.chunk_stickiness`
-- `intrinsic_model.*`
-- `save.enabled`
-- `save.yaml_name`
+Override intrinsic piu' comuni nel file esperimento:
+- `intrinsic_model.backend` (`lexical` oppure `hf_causal_lm`)
+- `intrinsic_metrics.*` (se vuoi attivare/disattivare metriche)
 
-Per la parte extrinsic:
-- `extrinsic`
-- `extrinsic_evaluator`
-- `extrinsic_script`
-- `results_dir`
-- `extrinsic_tasks.document_retrieval.ks`
-- `extrinsic_tasks.document_retrieval.normalized_dataset_dir`
-- `extrinsic_tasks.document_retrieval.split`
-- `extrinsic_tasks.document_retrieval.query_sample_size`
-- `extrinsic_tasks.document_retrieval.query_sample_seed`
+Override extrinsic piu' comuni nel file esperimento:
+- `extrinsic_tasks_to_run`
+- `extrinsic_tasks.<task>.ks`
+- opzionalmente `extrinsic_tasks.document_retrieval.normalized_dataset_dir` (per dataset con layout custom)
 
-Se `normalized_dataset_dir` e' valorizzato, query e qrels vengono letti da li'. E' il modo piu' robusto per evitare ambiguita' sui path.
+Se non specifichi path espliciti per evidences/answers, vengono risolti automaticamente a partire dalla normalized dir.
 
 ## Template minimi per i casi piu' comuni
 
@@ -378,16 +341,7 @@ retrieval:
   normalize: true
 
 evaluation:
-  intrinsic: true
-  intrinsic_evaluator: default
-  extrinsic: true
-  extrinsic_evaluator: document_retrieval
-  results_dir: results/extrinsic
-  extrinsic_tasks:
-    document_retrieval:
-      ks: [1, 3, 5, 10]
-      normalized_dataset_dir: data/normalized/beir/fiqa
-      split: dev
+  extrinsic_tasks_to_run: [document_retrieval]
 ```
 
 ### 2. `semantic_breakpoint`
