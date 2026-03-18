@@ -16,14 +16,60 @@ class FAISSRetriever(BaseRetriever):
         self.index = None
         self.metadata = None
         self._stream_state: dict[str, Any] | None = None
+        self._gpu_resources = None
 
-    def build_index(self, embedding_output: Any, config: Dict, global_config: Dict) -> Dict[str, Any]:
+    @classmethod
+    def supports_cuda(cls) -> bool:
+        try:
+            import faiss
+        except Exception:
+            return False
+
+        required_symbols = (
+            "StandardGpuResources",
+            "index_cpu_to_gpu",
+            "index_gpu_to_cpu",
+            "get_num_gpus",
+        )
+        if not all(hasattr(faiss, symbol) for symbol in required_symbols):
+            return False
+
+        try:
+            return int(faiss.get_num_gpus()) > 0
+        except Exception:
+            return False
+
+    @staticmethod
+    def _raise_cuda_requirement() -> None:
+        raise RuntimeError(
+            "retrieval.name='faiss' requires FAISS CUDA support (faiss-gpu + available CUDA GPU)."
+        )
+
+    def _load_faiss_with_cuda(self):
         try:
             import faiss
         except ImportError as e:
-            raise ImportError(
-                "faiss is not installed. Install faiss-cpu or faiss-gpu before running retrieval indexing."
+            raise RuntimeError(
+                "retrieval.name='faiss' requires FAISS CUDA support (faiss-gpu + available CUDA GPU)."
             ) from e
+        if not self.supports_cuda():
+            self._raise_cuda_requirement()
+        return faiss
+
+    def _to_gpu_index(self, faiss: Any, cpu_index: Any):
+        if self._gpu_resources is None:
+            self._gpu_resources = faiss.StandardGpuResources()
+        return faiss.index_cpu_to_gpu(self._gpu_resources, 0, cpu_index)
+
+    @staticmethod
+    def _to_cpu_index(faiss: Any, index: Any):
+        try:
+            return faiss.index_gpu_to_cpu(index)
+        except Exception:
+            return index
+
+    def build_index(self, embedding_output: Any, config: Dict, global_config: Dict) -> Dict[str, Any]:
+        faiss = self._load_faiss_with_cuda()
 
         validated_output = validate_embedding_output(embedding_output)
         embeddings = validated_output["embeddings"]
@@ -53,14 +99,16 @@ class FAISSRetriever(BaseRetriever):
         dim = vectors.shape[1]
 
         if distance == "cosine":
-            index = faiss.IndexFlatIP(dim)
+            cpu_index = faiss.IndexFlatIP(dim)
         elif distance == "l2":
-            index = faiss.IndexFlatL2(dim)
+            cpu_index = faiss.IndexFlatL2(dim)
         else:
             raise ValueError("Unsupported distance. Use 'cosine' or 'l2'.")
 
+        index = self._to_gpu_index(faiss, cpu_index)
+
         print(
-            f"[RETRIEVAL] Building FAISS index with distance={distance}, "
+            f"[RETRIEVAL] Building FAISS CUDA index with distance={distance}, "
             f"normalize={normalize}, vectors={vectors.shape[0]}, dim={vectors.shape[1]}"
         )
 
@@ -70,7 +118,7 @@ class FAISSRetriever(BaseRetriever):
         metadata_path = output_path / "metadata.pkl"
         manifest_path = output_path / "manifest.json"
 
-        faiss.write_index(index, str(index_path))
+        faiss.write_index(self._to_cpu_index(faiss, index), str(index_path))
 
         serializable_items = []
         for item in items:
@@ -125,14 +173,10 @@ class FAISSRetriever(BaseRetriever):
         }
 
     def load_index(self, index_path: str, metadata_path: str | None = None) -> Dict[str, Any]:
-        try:
-            import faiss
-        except ImportError as e:
-            raise ImportError(
-                "faiss is not installed. Install faiss-cpu or faiss-gpu before running retrieval indexing."
-            ) from e
+        faiss = self._load_faiss_with_cuda()
 
-        index = faiss.read_index(index_path)
+        cpu_index = faiss.read_index(index_path)
+        index = self._to_gpu_index(faiss, cpu_index)
         metadata = None
 
         if metadata_path is not None:
@@ -170,6 +214,7 @@ class FAISSRetriever(BaseRetriever):
         }
 
     def start_incremental_index(self, config: Dict, global_config: Dict) -> None:
+        faiss = self._load_faiss_with_cuda()
         resume = bool(config.get("_stream_resume", False))
         dataset_name = global_config["dataset"]["name"]
         chunking_type = global_config["chunking"]["type"]
@@ -196,8 +241,7 @@ class FAISSRetriever(BaseRetriever):
         existing_index = None
         if resume and index_path.exists() and metadata_path.exists():
             try:
-                import faiss
-                existing_index = faiss.read_index(str(index_path))
+                existing_index = self._to_gpu_index(faiss, faiss.read_index(str(index_path)))
             except Exception:
                 existing_index = None
             try:
@@ -252,12 +296,7 @@ class FAISSRetriever(BaseRetriever):
         if arr.shape[0] == 0:
             return
 
-        try:
-            import faiss
-        except ImportError as e:
-            raise ImportError(
-                "faiss is not installed. Install faiss-cpu or faiss-gpu before running retrieval indexing."
-            ) from e
+        faiss = self._load_faiss_with_cuda()
 
         if self._stream_state["normalize"] or self._stream_state["distance"] == "cosine":
             faiss.normalize_L2(arr)
@@ -267,11 +306,12 @@ class FAISSRetriever(BaseRetriever):
         if expected_dim is None:
             self._stream_state["dimension"] = dim
             if self._stream_state["distance"] == "cosine":
-                self.index = faiss.IndexFlatIP(dim)
+                cpu_index = faiss.IndexFlatIP(dim)
             elif self._stream_state["distance"] == "l2":
-                self.index = faiss.IndexFlatL2(dim)
+                cpu_index = faiss.IndexFlatL2(dim)
             else:
                 raise ValueError("Unsupported distance. Use 'cosine' or 'l2'.")
+            self.index = self._to_gpu_index(faiss, cpu_index)
         elif int(expected_dim) != dim:
             raise ValueError(
                 f"Inconsistent embedding dimension across batches: expected {expected_dim}, got {dim}"
@@ -291,12 +331,7 @@ class FAISSRetriever(BaseRetriever):
         if self._stream_state is None:
             raise RuntimeError("No incremental indexing session found.")
 
-        try:
-            import faiss
-        except ImportError as e:
-            raise ImportError(
-                "faiss is not installed. Install faiss-cpu or faiss-gpu before running retrieval indexing."
-            ) from e
+        faiss = self._load_faiss_with_cuda()
 
         output_path: Path = self._stream_state["output_path"]
         index_path: Path = self._stream_state["index_path"]
@@ -311,10 +346,11 @@ class FAISSRetriever(BaseRetriever):
 
         if self.index is None:
             if self._stream_state["distance"] == "cosine":
-                self.index = faiss.IndexFlatIP(max(dim, 1))
+                cpu_index = faiss.IndexFlatIP(max(dim, 1))
             else:
-                self.index = faiss.IndexFlatL2(max(dim, 1))
-        faiss.write_index(self.index, str(index_path))
+                cpu_index = faiss.IndexFlatL2(max(dim, 1))
+            self.index = self._to_gpu_index(faiss, cpu_index)
+        faiss.write_index(self._to_cpu_index(faiss, self.index), str(index_path))
 
         with metadata_path.open("wb") as f:
             pickle.dump(

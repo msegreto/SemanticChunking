@@ -7,6 +7,7 @@ from typing import Any, Sequence
 
 import ir_measures
 from src.embeddings.factory import EmbedderFactory
+from src.retrieval.factory import RetrieverFactory
 
 from .base import BaseExtrinsicEvaluator
 from .common import ExtrinsicRunContext, build_base_row, build_run_context
@@ -311,17 +312,8 @@ class DocumentRetrievalEvaluator(BaseExtrinsicEvaluator):
 
     @staticmethod
     def _load_retriever(retrieval_cfg: dict[str, Any]):
-        retriever_name = retrieval_cfg.get("name", "").lower()
-
-        if retriever_name == "numpy":
-            from src.retrieval.numpy_retriever import NumpyRetriever
-            return NumpyRetriever()
-
-        if retriever_name == "faiss":
-            from src.retrieval.faiss_retriever import FAISSRetriever
-            return FAISSRetriever()
-
-        raise ValueError(f"Unsupported retriever for extrinsic evaluation: {retrieval_cfg.get('name')}")
+        retriever_name = retrieval_cfg.get("name", "")
+        return RetrieverFactory.create(str(retriever_name).strip().lower())
 
     @staticmethod
     def _encode_queries(embedder, query_texts: list[str], embedding_cfg: dict[str, Any]):
