@@ -86,6 +86,18 @@ Responsabilità:
 
 È un processor volutamente generico: il dataset specifico viene passato come parametro del costruttore e non richiede una classe dedicata per ogni collezione BEIR.
 
+### `scripted.py`
+Contiene processor specializzati che costruiscono direttamente la cache normalizzata tramite script dedicati.
+
+Attualmente usato per:
+- `beir/qasper` -> `scripts/download_qasper_hf_to_normalized.py`
+- `beir/techqa` -> `scripts/download_techqa_hf_to_normalized.py`
+
+Comportamento:
+- se la normalized richiesta esiste ed è compatibile, viene riusata;
+- altrimenti il processor lancia lo script di conversione e poi carica la normalized appena creata;
+- questo permette run end-to-end da YAML senza pre-download manuale.
+
 ### `msmarco.py`
 Contiene `MSMarcoDatasetProcessor`.
 

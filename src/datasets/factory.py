@@ -5,6 +5,7 @@ from typing import Dict, Type
 from src.datasets.base import BaseDatasetProcessor
 from src.datasets.beir import BEIRDatasetProcessor
 from src.datasets.msmarco import MSMarcoDatasetProcessor
+from src.datasets.scripted import QasperScriptedProcessor, TechQAScriptedProcessor
 
 
 class DatasetFactory:
@@ -14,6 +15,12 @@ class DatasetFactory:
         # by the generic BEIR processor below.
         "msmarco-docs": MSMarcoDatasetProcessor,
         "msmarco": MSMarcoDatasetProcessor,
+    }
+    _beir_overrides: Dict[str, Type[BaseDatasetProcessor]] = {
+        # These datasets are ingested via dedicated converters that produce
+        # project-normalized artifacts directly under data/normalized/.
+        "qasper": QasperScriptedProcessor,
+        "techqa": TechQAScriptedProcessor,
     }
 
     @classmethod
@@ -28,6 +35,9 @@ class DatasetFactory:
             dataset_name = normalized_name.split("/", 1)[1]
             if not dataset_name:
                 raise ValueError("BEIR dataset name missing. Expected format: 'beir/<dataset_name>'")
+            override_cls = cls._beir_overrides.get(dataset_name)
+            if override_cls is not None:
+                return override_cls()
             return BEIRDatasetProcessor(dataset_name=dataset_name)
 
         if normalized_name in cls._registry:

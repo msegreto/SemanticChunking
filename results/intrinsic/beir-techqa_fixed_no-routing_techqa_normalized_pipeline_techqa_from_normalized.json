@@ -1,0 +1,20 @@
+{
+  "evaluator_name": "default",
+  "metrics": {
+    "boundary_clarity": 0.8429191273751346,
+    "chunk_stickiness_complete": 1.5770734303621297,
+    "chunk_stickiness_incomplete": 1.5770734303621297
+  },
+  "per_document_metrics": [],
+  "metadata": {
+    "num_documents": 995,
+    "num_chunks": 2973,
+    "scorer_backend": "lexical",
+    "intrinsic_model": {
+      "edge_threshold": 0.0,
+      "sequential_delta": 0
+    },
+    "streaming": true,
+    "stores_per_document_metrics": false
+  }
+}

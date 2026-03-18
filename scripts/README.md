@@ -8,6 +8,8 @@ File presenti:
 - `run_pipeline.py`: entrypoint principale. Legge `--config`, costruisce `ExperimentOrchestrator` da `src/pipelines/experiment_orchestrator.py` e lancia il flusso completo.
 - `run_extrinsic_eval.py`: script separato per la sola valutazione extrinsic. Viene richiamato anche dall'orchestrator tramite subprocess quando `evaluation.extrinsic` è abilitato.
 - `download_datasets.py`: utility per verificare o scaricare i dataset raw usando `DatasetFactory` e i processor definiti in `src/datasets/`.
+- `download_qasper_hf_to_normalized.py`: converte QASPER da Hugging Face nel formato normalizzato interno (`documents.jsonl`, `queries.json`, `qrels`, `evidences`, `answers`).
+- `download_techqa_hf_to_normalized.py`: converte TechQA da Hugging Face nel formato normalizzato interno, con estrazione best-effort di evidenze e risposte quando presenti.
 - `__init__.py`: rende importabile il package `scripts` quando alcuni script vengono invocati come modulo.
 
 Collegamenti principali:

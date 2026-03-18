@@ -124,7 +124,8 @@ class ExperimentOrchestrator:
         retrieval_enabled = bool(retrieval_cfg.get("enabled", True))
         if retrieval_enabled:
             # Streaming progress is owned by index checkpoint for the active retrieval/chunking config.
-            # Do not inherit doc progress from split_state, otherwise a different index config can appear complete.
+            # Do not inherit doc progress from split_state by default, otherwise a different index
+            # config can appear complete without a corresponding index checkpoint.
             next_doc_idx = int(stream_state.get("next_doc_idx", 0))
             next_unit_id = int(stream_state.get("next_unit_id", 0))
         else:
@@ -135,12 +136,37 @@ class ExperimentOrchestrator:
         if not isinstance(expected_docs, int) or expected_docs < 0:
             expected_docs = 0
 
+        split_completed = bool(split_state.get("completed", False))
+        split_expected_docs = split_state.get("expected_docs")
+        split_expected_matches = not isinstance(split_expected_docs, int) or split_expected_docs == expected_docs
+        reuse_saved_split_units = (
+            split_save_output
+            and split_path_obj is not None
+            and split_path_obj.exists()
+            and split_completed
+            and split_expected_matches
+            and self._should_allow_reuse("split")
+        )
+        if reuse_saved_split_units:
+            print(
+                "[INFO] Split shortcut activated: reusing saved split units from "
+                f"{split_path_obj}."
+            )
+        elif split_completed and not split_expected_matches:
+            print(
+                "[INFO] split_state expected_docs mismatch with current dataset; "
+                "saved split units will not be reused."
+            )
+
         total_docs = int(stream_state.get("total_docs_processed", 0))
         total_chunks = int(stream_state.get("total_chunks_processed", 0))
         total_index_items = int(stream_state.get("total_index_items", 0))
-        total_units = int(stream_state.get("total_units_processed", split_state.get("total_units_processed", 0)))
+        if retrieval_enabled:
+            total_units = int(stream_state.get("total_units_processed", 0))
+        else:
+            total_units = int(stream_state.get("total_units_processed", split_state.get("total_units_processed", 0)))
 
-        if split_save_output and split_path_obj is not None and next_doc_idx == 0:
+        if split_save_output and split_path_obj is not None and next_doc_idx == 0 and not reuse_saved_split_units:
             split_path_obj.parent.mkdir(parents=True, exist_ok=True)
             split_path_obj.write_text("", encoding="utf-8")
 
@@ -153,7 +179,7 @@ class ExperimentOrchestrator:
                 "num_documents": expected_docs,
                 "num_units": total_units,
                 "source_metadata": dataset_output.get("metadata", {}),
-                "reused_existing_split": next_doc_idx > 0,
+                "reused_existing_split": bool(reuse_saved_split_units or next_doc_idx > 0),
                 "split_path": str(split_path_obj) if split_path_obj else None,
                 "streaming": True,
                 "incremental_by_window": True,
@@ -165,8 +191,20 @@ class ExperimentOrchestrator:
         stream_embedding_cfg["show_progress_bar"] = False
         stream_embedding_cfg["log_embedding_calls"] = False
 
-        doc_iter = enumerate(self._iter_documents_from_normalized(dataset_output))
-        self._advance_document_iterator(doc_iter, next_doc_idx)
+        doc_iter = None
+        split_units_iter = None
+        next_saved_units_pair = None
+        if reuse_saved_split_units and split_path_obj is not None:
+            doc_iter = enumerate(self._iter_documents_from_normalized(dataset_output))
+            split_units_iter = iter(self._iter_split_units_grouped_by_doc(split_path_obj))
+            next_saved_units_pair = self._advance_doc_and_split_iterators(
+                doc_iter=doc_iter,
+                split_units_iter=split_units_iter,
+                next_doc_idx=next_doc_idx,
+            )
+        else:
+            doc_iter = enumerate(self._iter_documents_from_normalized(dataset_output))
+            self._advance_document_iterator(doc_iter, next_doc_idx)
 
         final_index_output = None
         final_intrinsic_output = None
@@ -199,19 +237,32 @@ class ExperimentOrchestrator:
                 end_doc_idx_exclusive=end_doc_idx_exclusive,
             )
 
-            window_doc_ids, next_unit_id, total_docs, total_units = self._run_split_window(
-                doc_iter=doc_iter,
-                splitter=splitter,
-                split_components=split_components,
-                next_unit_id=next_unit_id,
-                split_save_output=split_save_output,
-                split_path_obj=split_path_obj,
-                window_paths=window_paths,
-                next_doc_idx=next_doc_idx,
-                end_doc_idx_exclusive=end_doc_idx_exclusive,
-                total_docs=total_docs,
-                total_units=total_units,
-            )
+            if split_units_iter is not None:
+                window_doc_ids, next_unit_id, total_docs, total_units, next_saved_units_pair = self._run_split_window_from_saved_split(
+                    doc_iter=doc_iter,
+                    split_units_iter=split_units_iter,
+                    next_saved_units_pair=next_saved_units_pair,
+                    next_unit_id=next_unit_id,
+                    window_paths=window_paths,
+                    next_doc_idx=next_doc_idx,
+                    end_doc_idx_exclusive=end_doc_idx_exclusive,
+                    total_docs=total_docs,
+                    total_units=total_units,
+                )
+            else:
+                window_doc_ids, next_unit_id, total_docs, total_units = self._run_split_window(
+                    doc_iter=doc_iter,
+                    splitter=splitter,
+                    split_components=split_components,
+                    next_unit_id=next_unit_id,
+                    split_save_output=split_save_output,
+                    split_path_obj=split_path_obj,
+                    window_paths=window_paths,
+                    next_doc_idx=next_doc_idx,
+                    end_doc_idx_exclusive=end_doc_idx_exclusive,
+                    total_docs=total_docs,
+                    total_units=total_units,
+                )
 
             current_window_docs = len(window_doc_ids)
             window_chunk_count, total_chunks = self._run_chunking_window(
@@ -337,6 +388,28 @@ class ExperimentOrchestrator:
             if doc_idx + 1 >= next_doc_idx:
                 break
 
+    @staticmethod
+    def _advance_doc_and_split_iterators(
+        *,
+        doc_iter: Any,
+        split_units_iter: Any,
+        next_doc_idx: int,
+    ) -> tuple[str, list[dict[str, Any]]] | None:
+        next_saved_units_pair = next(split_units_iter, None)
+        advanced_docs = 0
+        while advanced_docs < next_doc_idx:
+            try:
+                _doc_idx, doc = next(doc_iter)
+            except StopIteration:
+                break
+            doc_id = str(doc.get("id", ""))
+            if not doc_id:
+                continue
+            if next_saved_units_pair is not None and str(next_saved_units_pair[0]) == doc_id:
+                next_saved_units_pair = next(split_units_iter, None)
+            advanced_docs += 1
+        return next_saved_units_pair
+
     def _build_intrinsic_runtime_for_window(
         self,
         *,
@@ -373,6 +446,7 @@ class ExperimentOrchestrator:
         print(f"[INFO] Building retrieval index (streaming): {retriever_name}")
         retriever = RetrieverFactory.create(retriever_name)
         retrieval_cfg_for_stream = dict(retrieval_cfg)
+        retrieval_cfg_for_stream["output_dir"] = str(self._resolve_retrieval_output_dir(retrieval_cfg))
         retrieval_cfg_for_stream["_stream_resume"] = next_doc_idx > 0
         retriever.start_incremental_index(retrieval_cfg_for_stream, self.config)
         embedder = EmbedderFactory.create(self.config["embedding"]["name"])
@@ -457,6 +531,73 @@ class ExperimentOrchestrator:
             split_progress.close()
 
         return window_doc_ids, next_unit_id, total_docs, total_units
+
+    def _run_split_window_from_saved_split(
+        self,
+        *,
+        doc_iter: Any,
+        split_units_iter: Any,
+        next_saved_units_pair: tuple[str, list[dict[str, Any]]] | None,
+        next_unit_id: int,
+        window_paths: StreamingWindowPaths,
+        next_doc_idx: int,
+        end_doc_idx_exclusive: int,
+        total_docs: int,
+        total_units: int,
+    ) -> tuple[list[str], int, int, int, tuple[str, list[dict[str, Any]]] | None]:
+        window_target_docs = max(0, end_doc_idx_exclusive - next_doc_idx)
+        window_doc_ids: list[str] = []
+        split_progress = tqdm(
+            total=window_target_docs,
+            desc="Split (streaming, reuse)",
+            unit="doc",
+            dynamic_ncols=True,
+            miniters=1,
+        )
+        try:
+            while len(window_doc_ids) < window_target_docs:
+                try:
+                    _doc_idx, doc = next(doc_iter)
+                except StopIteration:
+                    break
+
+                normalized_doc_id = str(doc.get("id", ""))
+                if not normalized_doc_id:
+                    continue
+
+                units: list[dict[str, Any]] = []
+                if next_saved_units_pair is not None and str(next_saved_units_pair[0]) == normalized_doc_id:
+                    units = next_saved_units_pair[1]
+                    next_saved_units_pair = next(split_units_iter, None)
+
+                normalized_units: list[dict[str, Any]] = []
+                max_unit_id = next_unit_id
+                for unit in units:
+                    if not isinstance(unit, dict):
+                        continue
+                    normalized_units.append(unit)
+                    unit_id = unit.get("unit_id")
+                    if isinstance(unit_id, int) and unit_id >= max_unit_id:
+                        max_unit_id = unit_id + 1
+
+                total_docs += 1
+                total_units += len(normalized_units)
+                next_unit_id = max_unit_id
+                if normalized_units:
+                    self._append_jsonl_rows(window_paths.split_tmp, normalized_units)
+
+                window_doc_ids.append(normalized_doc_id)
+                split_progress.update(1)
+                split_progress.set_postfix(
+                    doc=normalized_doc_id,
+                    doc_units=len(normalized_units),
+                    total_units=total_units,
+                    refresh=True,
+                )
+        finally:
+            split_progress.close()
+
+        return window_doc_ids, next_unit_id, total_docs, total_units, next_saved_units_pair
 
     def _run_chunking_window(
         self,
@@ -774,11 +915,19 @@ class ExperimentOrchestrator:
     def _resolve_retrieval_output_dir(self, retrieval_cfg: Dict[str, Any]) -> Path:
         dataset_name = self.config["dataset"]["name"]
         chunking_type = self.config["chunking"]["type"]
-        embedder_name = self.config["embedding"]["name"]
-        output_dir = retrieval_cfg.get(
-            "output_dir",
-            f"data/indexes/{dataset_name}/{chunking_type}/{embedder_name}",
-        )
+        configured_output_dir = retrieval_cfg.get("output_dir")
+        if isinstance(configured_output_dir, str) and configured_output_dir.strip():
+            return Path(configured_output_dir)
+
+        if self.config_path is not None:
+            experiment_id = self.config_path.stem
+        else:
+            experiment_id = str(self.config.get("experiment_name", "")).strip()
+
+        if not experiment_id:
+            experiment_id = str(self.config.get("embedding", {}).get("name", "default")).strip() or "default"
+
+        output_dir = f"data/indexes/{dataset_name}/{chunking_type}/{experiment_id}"
         return Path(output_dir)
 
     def _manifest_matches_current_config(

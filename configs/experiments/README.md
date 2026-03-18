@@ -200,6 +200,7 @@ Definisce quale dataset usare e come gestire raw e normalized.
 
 Campi piu' importanti:
 - `name`: richiesto. Formati supportati oggi: `beir/<dataset_name>`, `msmarco`, `msmarco-docs`.
+  - nota: `beir/qasper` e `beir/techqa` hanno un ingest dedicato che può costruire automaticamente la `normalized` tramite script converter, senza richiedere pre-download manuale.
 - `data_dir`: path della raw.
 - `normalized_dir`: opzionale; se omesso il codice usa `data/normalized/<dataset_name>`.
 - `split`: split del dataset, per esempio `dev` o `test`.
@@ -300,7 +301,7 @@ Campi principali:
 - `name`: `numpy` oppure `faiss`
 - `distance`: `cosine` oppure `l2`
 - `normalize`: se `true`, normalizza i vettori
-- `output_dir`: opzionale; se omesso usa `data/indexes/<dataset>/<chunking>/<embedder>`
+- `output_dir`: opzionale; se omesso usa `data/indexes/<dataset>/<chunking>/<config_file_stem>` (fallback: `experiment_name`, poi `embedding.name`)
 
 L'orchestrator prova a riusare un indice esistente se trova un `manifest.json` compatibile con la configurazione corrente.
 
