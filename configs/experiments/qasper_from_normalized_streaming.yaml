@@ -94,7 +94,5 @@ evaluation:
       ks: [1, 3, 5, 10]
       evidence_path: data/normalized/beir/qasper/evidences.json
     answer_generation:
-      ks: [1, 3, 5, 10]
+      ks: [5]
       answers_path: data/normalized/beir/qasper/answers.json
-      generation_model:
-        name: dummy-qasper-model

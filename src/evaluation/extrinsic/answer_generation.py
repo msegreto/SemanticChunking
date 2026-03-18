@@ -16,7 +16,7 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
     _bertscorer_cache: dict[tuple[str, str, bool, str], Any] = {}
     PAPER_TOP_K_FOR_GENERATION = 5
     PAPER_BERTSCORE_MODEL = "microsoft/deberta-xlarge-mnli"
-    PAPER_LLM_NAME = "gpt-4o-mini"
+    GENERATION_MODEL_LABEL = "extractive-no-llm"
 
     @property
     def task_name(self) -> str:
@@ -33,10 +33,6 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
         task_cfg = config.get("evaluation", {}).get("extrinsic_tasks", {}).get(self.task_name, {})
         answers_file = self._resolve_optional_path(task_cfg.get("answers_path"))
 
-        generation_model = task_cfg.get("generation_model", {})
-        model_name = generation_model.get("name") if isinstance(generation_model, dict) else None
-        model_name = model_name.strip() if isinstance(model_name, str) and model_name.strip() else None
-
         if not ks:
             return self._build_rows(
                 config=config,
@@ -46,7 +42,7 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
                 status="skipped",
                 details="Task skipped: empty ks.",
                 answers_path=None,
-                generation_model=None,
+                generation_model=self.GENERATION_MODEL_LABEL,
             )
 
         resolved_ks = sorted({int(k) for k in ks})
@@ -60,7 +56,7 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
                 status="skipped",
                 details="Task skipped: missing answers_path in YAML.",
                 answers_path=None,
-                generation_model=model_name,
+                generation_model=self.GENERATION_MODEL_LABEL,
             )
 
         if not answers_file.exists():
@@ -72,19 +68,7 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
                 status="skipped",
                 details=f"Task skipped: answer annotations file not found at {answers_file}.",
                 answers_path=str(answers_file),
-                generation_model=model_name,
-            )
-
-        if model_name is None:
-            return self._build_rows(
-                config=config,
-                ks=resolved_ks,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
-                status="skipped",
-                details="Task skipped: missing generation_model.name in YAML.",
-                answers_path=str(answers_file),
-                generation_model=None,
+                generation_model=self.GENERATION_MODEL_LABEL,
             )
 
         queries_path = resolve_queries_path(config)
@@ -102,7 +86,7 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
                 status="skipped",
                 details="Task skipped: no overlapping query ids between queries and answers.",
                 answers_path=str(answers_file),
-                generation_model=model_name,
+                generation_model=self.GENERATION_MODEL_LABEL,
             )
 
         retrieval_cfg = config["retrieval"]
@@ -134,7 +118,7 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
                 status="skipped",
                 details="Task skipped: no answerable queries with reference answers found.",
                 answers_path=str(answers_file),
-                generation_model=model_name,
+                generation_model=self.GENERATION_MODEL_LABEL,
             )
 
         row_idx_by_qid = {qid: idx for idx, qid in enumerate(ordered_qids)}
@@ -187,15 +171,12 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
         }
 
         notes: list[str] = []
-        notes.append("generation backend is extractive heuristic; paper uses LLM-generated answers")
+        notes.append("generation backend is extractive heuristic; no external LLM used")
         if any(k != self.PAPER_TOP_K_FOR_GENERATION for k in resolved_ks):
             notes.append(
                 "paper uses top-5 chunks for answer generation; metrics replicated across requested ks"
             )
-        if model_name.lower() != self.PAPER_LLM_NAME:
-            notes.append(
-                f"generation_model.name is '{model_name}', paper uses '{self.PAPER_LLM_NAME}'"
-            )
+        notes.append("paper uses LLM-generated answers; this run uses extractive generation")
         if bertscore_warning:
             notes.append(f"BERTScore unavailable: {bertscore_warning}")
 
@@ -212,7 +193,7 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
             index_metadata_path=index_metadata_path,
             details=details,
             answers_path=str(answers_file),
-            generation_model=model_name,
+            generation_model=self.GENERATION_MODEL_LABEL,
         )
 
     @staticmethod
@@ -287,7 +268,6 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
     ) -> str:
         if not candidate_chunk_texts:
             return ""
-
         query_tokens = set(cls._normalize_tokens(query))
         candidate_sentences: list[str] = []
         for chunk_text in candidate_chunk_texts:
@@ -351,44 +331,29 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
             return 0.0, None
 
         device = cls._resolve_bertscore_device()
-        attempted_errors: list[str] = []
-        model_candidates = [cls.PAPER_BERTSCORE_MODEL, "roberta-large"]
+        try:
+            scorer = cls._get_bertscorer(
+                BERTScorer=BERTScorer,
+                model_type=cls.PAPER_BERTSCORE_MODEL,
+                lang="en",
+                rescale_with_baseline=True,
+                device=device,
+            )
+            _, _, f1 = scorer.score(flat_cands, flat_refs, verbose=False)
 
-        for model_type in model_candidates:
-            try:
-                scorer = cls._get_bertscorer(
-                    BERTScorer=BERTScorer,
-                    model_type=model_type,
-                    lang="en",
-                    rescale_with_baseline=True,
-                    device=device,
-                )
+            per_query_best: list[float] = []
+            for start, end in offsets:
+                if start == end:
+                    per_query_best.append(0.0)
+                    continue
+                per_query_best.append(float(torch_max(f1[start:end])))
 
-                _, _, f1 = scorer.score(flat_cands, flat_refs, verbose=False)
-
-                per_query_best: list[float] = []
-                for start, end in offsets:
-                    if start == end:
-                        per_query_best.append(0.0)
-                        continue
-                    per_query_best.append(float(torch_max(f1[start:end])))
-
-                if not per_query_best:
-                    return 0.0, None
-
-                score_value = float(sum(per_query_best) / len(per_query_best))
-                if model_type != cls.PAPER_BERTSCORE_MODEL:
-                    warn = (
-                        f"paper BERTScore model '{cls.PAPER_BERTSCORE_MODEL}' failed; "
-                        f"fallback to '{model_type}'"
-                    )
-                    return score_value, warn
-                return score_value, None
-            except Exception as e:
-                attempted_errors.append(f"{model_type}: {e}")
-                continue
-
-        return None, " | ".join(attempted_errors)
+            if not per_query_best:
+                return 0.0, None
+            score_value = float(sum(per_query_best) / len(per_query_best))
+            return score_value, None
+        except Exception as e:
+            return None, f"{cls.PAPER_BERTSCORE_MODEL}: {e}"
 
     @classmethod
     def _resolve_bertscore_device(cls) -> str:
