@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
+
+# Force all extrinsic eval runs to use GPU 0.
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 from src.config.loader import load_experiment_config
 from src.evaluation.extrinsic.common import build_base_row, build_run_context
@@ -13,6 +19,26 @@ from src.evaluation.extrinsic.io import (
     resolve_answers_path,
     resolve_evidence_path,
 )
+
+
+def _assert_gpu_zero_available() -> None:
+    if shutil.which("nvidia-smi") is None:
+        raise RuntimeError("GPU 0 required, but 'nvidia-smi' is not available.")
+
+    result = subprocess.run(
+        ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"GPU 0 required, but nvidia-smi failed (exit_code={result.returncode})."
+        )
+
+    gpu_indexes = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    if "0" not in gpu_indexes:
+        raise RuntimeError("GPU 0 required, but it is not available on this machine.")
 
 
 def parse_args() -> argparse.Namespace:
@@ -186,6 +212,7 @@ def _write_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
 
 
 def main() -> None:
+    _assert_gpu_zero_available()
     args = parse_args()
 
     config_path = Path(args.config)

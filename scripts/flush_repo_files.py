@@ -16,7 +16,9 @@ def collect_files(root_dir: Path, targets: list[str]) -> list[Path]:
                 sorted(
                     p
                     for p in abs_dir.rglob("*")
-                    if p.is_file() and p.name.lower() != "readme.md"
+                    if p.is_file()
+                    and p.name.lower() != "readme.md"
+                    and p.name != ".gitkeep"
                 )
             )
     return files

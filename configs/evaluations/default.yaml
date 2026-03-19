@@ -8,7 +8,7 @@ evaluation:
 
   intrinsic_model:
     backend: lexical
-    name: sshleifer/tiny-gpt2
+    name: gpt2-large
     device: auto
     max_length: 1024
     trust_remote_code: false
