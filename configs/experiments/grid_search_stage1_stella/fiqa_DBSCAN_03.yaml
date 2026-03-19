@@ -1,0 +1,48 @@
+experiment_name: fiqa_DBSCAN_03
+evaluation_profile: default
+execution_profile: default
+dataset:
+  name: beir/fiqa
+  data_dir: data/raw/beir/fiqa
+  normalized_dir: data/normalized/beir/fiqa
+  split: test
+  download_if_missing: true
+  use_normalized_if_available: true
+  save_normalized: true
+split:
+  type: sentence
+  model: en_core_web_sm
+  save_output: true
+  output_path: data/processed/fiqa/sentences.jsonl
+router:
+  enabled: false
+  name: moc
+chunking:
+  type: semantic_clustering
+  dataset: fiqa
+  save_chunks: false
+  embedding_model: stella
+  embedding_batch_size: 64
+  similarity_metric: cosine
+  show_embedding_progress: true
+  clustering_mode: dbscan
+  lambda: 0.5
+  dbscan_eps: 0.3
+  dbscan_min_samples: 2
+embedding:
+  name: stella
+  batch_size: 32
+  normalize_embeddings: true
+  show_progress_bar: true
+retrieval:
+  enabled: true
+  name: faiss
+  distance: cosine
+  normalize: true
+evaluation:
+  intrinsic_model:
+    backend: hf_causal_lm
+  extrinsic_tasks_to_run:
+  - document_retrieval
+  - evidence_retrieval
+  - answer_generation

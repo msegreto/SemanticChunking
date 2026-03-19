@@ -1,0 +1,48 @@
+experiment_name: nfcorpus_SLINK_01
+evaluation_profile: default
+execution_profile: default
+dataset:
+  name: beir/nfcorpus
+  data_dir: data/raw/beir/nfcorpus
+  normalized_dir: data/normalized/beir/nfcorpus
+  split: test
+  download_if_missing: true
+  use_normalized_if_available: true
+  save_normalized: true
+split:
+  type: sentence
+  model: en_core_web_sm
+  save_output: true
+  output_path: data/processed/nfcorpus/sentences.jsonl
+router:
+  enabled: false
+  name: moc
+chunking:
+  type: semantic_clustering
+  dataset: nfcorpus
+  save_chunks: false
+  embedding_model: stella
+  embedding_batch_size: 64
+  similarity_metric: cosine
+  show_embedding_progress: true
+  clustering_mode: single_linkage
+  lambda: 0.0
+  number_of_chunks: 5
+  stop_distance_threshold: 0.5
+embedding:
+  name: stella
+  batch_size: 32
+  normalize_embeddings: true
+  show_progress_bar: true
+retrieval:
+  enabled: true
+  name: faiss
+  distance: cosine
+  normalize: true
+evaluation:
+  intrinsic_model:
+    backend: hf_causal_lm
+  extrinsic_tasks_to_run:
+  - document_retrieval
+  - evidence_retrieval
+  - answer_generation
