@@ -1,0 +1,42 @@
+experiment_name: nfcorpus_FIXED_03
+evaluation_profile: default
+execution_profile: default
+dataset:
+  name: beir/nfcorpus
+  data_dir: data/raw/beir/nfcorpus
+  normalized_dir: data/normalized/beir/nfcorpus
+  split: test
+  download_if_missing: true
+  use_normalized_if_available: true
+  save_normalized: true
+split:
+  type: sentence
+  model: en_core_web_sm
+  save_output: true
+  output_path: data/processed/nfcorpus/sentences.jsonl
+router:
+  enabled: false
+  name: moc
+chunking:
+  type: fixed
+  dataset: nfcorpus
+  save_chunks: false
+  n_chunks: 5
+  overlap_sentences: 1
+embedding:
+  name: mpnet
+  batch_size: 32
+  normalize_embeddings: true
+  show_progress_bar: false
+retrieval:
+  enabled: true
+  name: faiss
+  distance: cosine
+  normalize: true
+evaluation:
+  intrinsic_model:
+    backend: hf_causal_lm
+  extrinsic_tasks_to_run:
+  - document_retrieval
+  - evidence_retrieval
+  - answer_generation

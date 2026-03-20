@@ -6,6 +6,9 @@ Il loro ruolo è fare da sottile livello di ingresso: leggono argomenti da linea
 
 File presenti:
 - `run_pipeline.py`: entrypoint principale. Legge `--config`, costruisce `ExperimentOrchestrator` da `src/pipelines/experiment_orchestrator.py` e lancia il flusso completo.
+- `run_split_normalized.py`: esegue solo lo split (sentence streaming) partendo dal dataset normalizzato e salva uno stato persistente su `state_split.json` (di default accanto a `split.output_path`).
+- `run_split_all_normalized.py`: esegue lo split sentence su tutti i dataset già presenti sotto `data/normalized/**` (sia BEIR sia non-BEIR), creando output e `state_split.json` per ogni dataset.
+- `precompute_split_embeddings.py`: pre-calcola embeddings per ogni riga dei file split (`sentences.jsonl`) e li salva dentro il JSONL (`embeddings.<model/cache_key>`), con stato `state_embeddings_<cache_key>.json`.
 - `run_experiments_resume.py`: lancia in batch tutti i YAML di una cartella con stato persistente su JSON; se interrompi l'esecuzione, rilanciando riparte dagli esperimenti mancanti.
 - `run_extrinsic_eval.py`: script separato per la sola valutazione extrinsic. Viene richiamato anche dall'orchestrator tramite subprocess quando `evaluation.extrinsic` è abilitato.
 - `prewarm_normalized_datasets.py`: legge i config esperimenti, deduplica i dataset richiesti e prepara in anticipo i cache normalizzati sotto `data/normalized/` (o root custom), così i run successivi evitano i tempi di download/conversione.
@@ -16,6 +19,9 @@ File presenti:
 
 Collegamenti principali:
 - `run_pipeline.py` -> `src/pipelines/experiment_orchestrator.py`
+- `run_split_normalized.py` -> `src/config/loader.py`, `src/datasets/`, `src/splitting/`
+- `run_split_all_normalized.py` -> `src/splitting/` + scansione diretta di `data/normalized/**/metadata.json`
+- `precompute_split_embeddings.py` -> `src/embeddings/` + aggiornamento in-place dei JSONL di split
 - `run_experiments_resume.py` -> `run_pipeline.py` (in loop sui config YAML)
 - `run_extrinsic_eval.py` -> `src/evaluation/extrinsic/`
 - `prewarm_normalized_datasets.py` -> `src/config/loader.py`, `src/datasets/`
