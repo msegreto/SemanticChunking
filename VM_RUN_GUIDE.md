@@ -1,25 +1,23 @@
-# Run Su VM: Installazione -> Esecuzione
+# Run on VM: Installation -> Execution
 
-Questa guida riassume i passaggi minimi per eseguire il progetto su una VM Linux.
+This guide summarizes the minimum steps required to run the project on a Linux VM.
 
-## 1) Prerequisiti VM
+## 1) VM Requirements
 
-- OS consigliato: Ubuntu 22.04+.
-- GPU NVIDIA disponibile come indice `0` (il codice forza `CUDA_VISIBLE_DEVICES=0`).
-- Driver NVIDIA installati e comando `nvidia-smi` funzionante.
+- Recommended OS: Ubuntu 22.04+.
+- NVIDIA GPU available at index `0` (the code forces `CUDA_VISIBLE_DEVICES=0`).
+- NVIDIA drivers installed and `nvidia-smi` working.
 - Python `3.10`.
 - `git`.
 
-Check rapido:
+Quick check:
 
 ```bash
 nvidia-smi
 python3 --version
 ```
 
-
-
-## 2) rea ambiente virtuale e installa dipendenze
+## 2) Create a Virtual Environment and Install Dependencies
 
 ```bash
 python3 -m venv .venv
@@ -28,63 +26,63 @@ python -m pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 ```
 
-Note:
-- `spacy` e' incluso nei requirements; se il modello `en_core_web_sm` non e' presente, lo splitter fa fallback automatico a `spacy.blank("en")` + sentencizer.
-- Alcuni embedding (es. `stella`) possono richiedere download pesanti da Hugging Face.
+Notes:
+- `spacy` is included in the requirements; if the `en_core_web_sm` model is missing, the splitter automatically falls back to `spacy.blank("en")` + sentencizer.
+- Some embeddings (e.g. `mpnet`) may require large downloads from Hugging Face.
 
-## 3) (Opzionale ma consigliato) Token Hugging Face
+## 3) (Optional but Recommended) Hugging Face Token
 
-Se usi modelli/dataset con rate-limit o gated access:
+If you use models/datasets with rate limits or gated access:
 
 ```bash
-export HF_TOKEN="<il_tuo_token>"
+export HF_TOKEN="<your_token>"
 ```
 
-## 4) Prewarm dataset normalizzati (consigliato)
+## 4) Prewarm Normalized Datasets (Recommended)
 
-Prepara in anticipo `data/normalized/...` per ridurre tempi/fail durante i run:
+Prepare `data/normalized/...` in advance to reduce runtime and failures during runs:
 
 ```bash
 python -m scripts.prewarm_normalized_datasets \
-  --configs-dir configs/experiments/grid_search_stage1_stella
+  --configs-dir configs/experiments/grid_search_stage1_mpnet
 ```
 
-## 5) Run di un singolo esperimento
+## 5) Run a Single Experiment
 
-Esempio con un config reale presente nel repo:
+Example using a real config available in the repository:
 
 ```bash
 python -m scripts.run_pipeline \
-  --config configs/experiments/grid_search_stage1_stella/fiqa_FIXED_01.yaml
+  --config configs/experiments/grid_search_stage1_mpnet/fiqa_FIXED_01.yaml
 ```
 
-## 6) Run batch con resume automatico
+## 6) Batch Run with Automatic Resume
 
 ```bash
 python -m scripts.run_experiments_resume \
-  --configs-dir configs/experiments/grid_search_stage1_stella \
-  --state-file results/runner_state/grid_search_stage1_stella.json \
+  --configs-dir configs/experiments/grid_search_stage1_mpnet \
+  --state-file results/runner_state/grid_search_stage1_mpnet.json \
   --logs-dir logs
 ```
 
-Se vuoi ritentare quelli falliti:
+If you want to retry failed runs:
 
 ```bash
 python -m scripts.run_experiments_resume --retry-failed
 ```
 
-## 7) Nuovi script utili (split + precompute embeddings)
+## 7) Useful Scripts (Split + Precompute Embeddings)
 
-### 7.1 Split-only da config YAML
+### 7.1 Split-Only from YAML Config
 
-Esegue solo lo split sul dataset normalizzato del config e salva `state_split.json`.
+Runs only the split step on the config's normalized dataset and saves `state_split.json`.
 
 ```bash
 python -m scripts.run_split_normalized \
   --config configs/experiments/grid_search_stage1_mpnet/fiqa_FIXED_01.yaml
 ```
 
-Dry-run:
+Dry run:
 
 ```bash
 python -m scripts.run_split_normalized \
@@ -92,61 +90,61 @@ python -m scripts.run_split_normalized \
   --dry-run
 ```
 
-### 7.2 Split su tutti i dataset normalizzati
+### 7.2 Split All Normalized Datasets
 
-Scansiona `data/normalized/**` e genera split sotto `data/processed/**`.
+Scans `data/normalized/**` and generates splits under `data/processed/**`.
 
 ```bash
 python -m scripts.run_split_all_normalized --continue-on-error
 ```
 
-Dry-run:
+Dry run:
 
 ```bash
 python -m scripts.run_split_all_normalized --dry-run
 ```
 
-### 7.3 Precompute embeddings sugli split JSONL
+### 7.3 Precompute Embeddings on JSONL Splits
 
-Per precomputare e salvare embeddings dentro i `sentences.jsonl` (riuso nei run successivi):
+Precompute and store embeddings inside `sentences.jsonl` (to reuse in later runs):
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m scripts.precompute_split_embeddings --model mpnet
 CUDA_VISIBLE_DEVICES=0 python -m scripts.precompute_split_embeddings --model bge
-CUDA_VISIBLE_DEVICES=0 python -m scripts.precompute_split_embeddings --model stella
+CUDA_VISIBLE_DEVICES=0 python -m scripts.precompute_split_embeddings --model mpnet
 ```
 
-Dry-run:
+Dry run:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m scripts.precompute_split_embeddings --model mpnet --dry-run
 ```
 
-## 8) Dove trovi output e log
+## 8) Where to Find Outputs and Logs
 
-- Log per esperimento: `logs/*.txt`
-- Stato batch resume: `results/runner_state/*.json`
-- Risultati extrinsic: `results/extrinsic/*.csv`
-- Artefatti dati/chunk/index: sotto `data/`
+- Per-experiment logs: `logs/*.txt`
+- Batch resume state: `results/runner_state/*.json`
+- Extrinsic results: `results/extrinsic/*.csv`
+- Data/chunk/index artifacts: under `data/`
 
-## 9) Nota Docker (importante)
+## 9) Docker Note (Important)
 
-Nel repo attuale `docker-compose.yml` e `dockerfile` puntano a:
+In the current repository, `docker-compose.yml` and `dockerfile` point to:
 
 - `configs/experiments/base.yaml`
 
-ma quel file oggi non e' presente. Se usi Docker, devi passare un config esistente, ad esempio:
+but that file is currently missing. If you use Docker, pass an existing config instead, for example:
 
 ```bash
 python -u -m scripts.run_pipeline \
-  --config configs/experiments/grid_search_stage1_stella/fiqa_FIXED_01.yaml
+  --config configs/experiments/grid_search_stage1_mpnet/fiqa_FIXED_01.yaml
 ```
 
-## 10) Problemi comuni
+## 10) Common Issues
 
-- Errore `GPU 0 required` / `nvidia-smi not available`:
-  la VM non soddisfa i prerequisiti GPU richiesti dagli script.
+- `GPU 0 required` / `nvidia-smi not available` error:
+  the VM does not meet the GPU requirements expected by the scripts.
 - `ModuleNotFoundError`:
-  ambiente virtuale non attivo o dipendenze non installate.
-- Download lenti/falliti da HF:
-  imposta `HF_TOKEN` e riprova.
+  virtual environment not active or dependencies not installed.
+- Slow/failed HF downloads:
+  set `HF_TOKEN` and try again.

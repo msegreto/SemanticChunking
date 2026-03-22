@@ -13,6 +13,63 @@ import numpy as np
 from src.embeddings.factory import EmbedderFactory
 
 
+def _require_nvidia_cuda_or_crash() -> None:
+    try:
+        import torch
+    except Exception as e:
+        raise RuntimeError(
+            "PyTorch non disponibile: impossibile usare GPU NVIDIA. "
+            "Installare una build CUDA di torch."
+        ) from e
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA non disponibile: questo script richiede obbligatoriamente una GPU NVIDIA."
+        )
+
+    if torch.cuda.device_count() <= 0:
+        raise RuntimeError("Nessuna GPU CUDA rilevata.")
+
+    device_name = str(torch.cuda.get_device_name(0))
+    if "nvidia" not in device_name.lower():
+        raise RuntimeError(
+            f"Dispositivo CUDA non NVIDIA rilevato ({device_name!r}); esecuzione bloccata."
+        )
+
+    print(f"[INFO] CUDA OK: device[0]={device_name}")
+
+
+def _force_embedder_cuda_or_crash(embedder: Any) -> None:
+    model_loader = getattr(embedder, "_load_model", None)
+    if not callable(model_loader):
+        raise RuntimeError(
+            "Embedder non compatibile con controllo CUDA obbligatorio (_load_model mancante)."
+        )
+
+    model = model_loader()
+    if hasattr(model, "to"):
+        model.to("cuda")
+
+    device_repr = None
+    model_device = getattr(model, "device", None)
+    if model_device is not None:
+        device_repr = str(model_device)
+    if device_repr is None:
+        target_device = getattr(model, "_target_device", None)
+        if target_device is not None:
+            device_repr = str(target_device)
+    if device_repr is None and hasattr(model, "parameters"):
+        first_param = next(model.parameters(), None)
+        if first_param is not None:
+            device_repr = str(first_param.device)
+
+    if not device_repr or not device_repr.startswith("cuda"):
+        raise RuntimeError(
+            f"Embedder non su CUDA (device={device_repr!r}). "
+            "Questo script richiede GPU NVIDIA obbligatoria."
+        )
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -269,6 +326,7 @@ def _process_one(
 
     try:
         embedder = EmbedderFactory.create(model_name)
+        _force_embedder_cuda_or_crash(embedder)
         with job.split_path.open("r", encoding="utf-8") as f_in, tmp_path.open("w", encoding="utf-8") as f_out:
             buffer: list[dict[str, Any]] = []
             missing_indices: list[int] = []
@@ -372,6 +430,8 @@ def _process_one(
 
 def main() -> None:
     args = parse_args()
+    _require_nvidia_cuda_or_crash()
+
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be > 0")
     if args.line_chunk_size <= 0:
