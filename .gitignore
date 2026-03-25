@@ -32,6 +32,12 @@ data/normalized/*
 !results/ablations/.gitkeep
 !results/logs/.gitkeep
 
+# Experiment runner state/logs
+results/runner_state*/
+!results/runner_state/.gitkeep
+logs/*
+!logs/.gitkeep
+
 # File thesis status tracker
 TODO.md
 .hf_cache/
@@ -39,3 +45,4 @@ docs/
 reports/
 allignment.md
 scp.txt
+test.txt

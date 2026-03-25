@@ -127,6 +127,24 @@ CUDA_VISIBLE_DEVICES=0 python -m scripts.precompute_split_embeddings --model mpn
 - Extrinsic results: `results/extrinsic/*.csv`
 - Data/chunk/index artifacts: under `data/`
 
+### 8.1 Build Tables and Graphs from Extrinsic CSVs
+
+Generate summary tables and boxplots (document retrieval, evidence retrieval, answer generation):
+
+```bash
+python -m scripts.build_tables_graphs \
+  --input-glob "results/extrinsic/*.csv" \
+  --output-dir "tables&graphs"
+```
+
+You can also include a specific CSV path:
+
+```bash
+python -m scripts.build_tables_graphs \
+  --input-file /absolute/path/to/one_result.csv \
+  --output-dir "tables&graphs"
+```
+
 ## 9) Docker Note (Important)
 
 In the current repository, `docker-compose.yml` and `dockerfile` point to:

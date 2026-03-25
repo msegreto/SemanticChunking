@@ -29,7 +29,7 @@ chunking:
   threshold_value: 50
 embedding:
   name: mpnet
-  batch_size: 32
+  batch_size: 64
   normalize_embeddings: true
   show_progress_bar: false
 retrieval:

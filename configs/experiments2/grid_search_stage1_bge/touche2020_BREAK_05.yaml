@@ -1,0 +1,46 @@
+experiment_name: touche2020_BREAK_05
+evaluation_profile: default
+execution_profile: default
+dataset:
+  name: beir/webis-touche2020
+  data_dir: data/raw/beir/webis-touche2020
+  normalized_dir: data/normalized/beir/webis-touche2020
+  split: test
+  download_if_missing: true
+  use_normalized_if_available: true
+  save_normalized: true
+split:
+  type: sentence
+  model: en_core_web_sm
+  save_output: true
+  output_path: data/processed/webis-touche2020/sentences.jsonl
+router:
+  enabled: false
+  name: moc
+chunking:
+  type: semantic_breakpoint
+  dataset: webis-touche2020
+  save_chunks: false
+  embedding_model: bge
+  embedding_batch_size: 64
+  similarity_metric: cosine
+  show_embedding_progress: false
+  threshold_type: gradient
+  threshold_value: 70
+embedding:
+  name: bge
+  batch_size: 64
+  normalize_embeddings: true
+  show_progress_bar: false
+retrieval:
+  enabled: true
+  name: faiss
+  distance: cosine
+  normalize: true
+evaluation:
+  intrinsic_model:
+    backend: lexical
+  extrinsic_tasks_to_run:
+  - document_retrieval
+  - evidence_retrieval
+  - answer_generation

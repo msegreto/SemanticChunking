@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import random
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -50,7 +49,6 @@ class DocumentRetrievalEvaluator(BaseExtrinsicEvaluator):
             index_metadata_path=index_metadata_path,
         )
         ordered_qids = self._resolve_ordered_qids(
-            config=config,
             queries=queries,
             qrels=qrels,
         )
@@ -116,28 +114,12 @@ class DocumentRetrievalEvaluator(BaseExtrinsicEvaluator):
     def _resolve_ordered_qids(
         self,
         *,
-        config: dict[str, Any],
         queries: dict[str, str],
         qrels: dict[str, set[str]],
     ) -> list[str]:
         ordered_qids = [qid for qid in queries.keys() if qid in qrels]
         if not ordered_qids:
             raise ValueError("No overlapping query ids between queries.json and qrels")
-
-        task_cfg = (
-            config.get("evaluation", {})
-            .get("extrinsic_tasks", {})
-            .get("document_retrieval", {})
-        )
-        query_sample_size = task_cfg.get("query_sample_size")
-        query_sample_seed = int(task_cfg.get("query_sample_seed", 42))
-        if query_sample_size is not None:
-            query_sample_size = int(query_sample_size)
-            if query_sample_size <= 0:
-                raise ValueError("query_sample_size must be > 0")
-            if len(ordered_qids) > query_sample_size:
-                rng = random.Random(query_sample_seed)
-                ordered_qids = sorted(rng.sample(ordered_qids, query_sample_size))
         return ordered_qids
 
     def _compute_metrics(

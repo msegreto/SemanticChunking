@@ -1,0 +1,46 @@
+experiment_name: qasper_BREAK_05
+evaluation_profile: default
+execution_profile: default
+dataset:
+  name: beir/qasper
+  data_dir: data/raw/beir/qasper
+  normalized_dir: data/normalized/beir/qasper
+  split: test
+  download_if_missing: true
+  use_normalized_if_available: true
+  save_normalized: true
+split:
+  type: sentence
+  model: en_core_web_sm
+  save_output: true
+  output_path: data/processed/qasper/sentences.jsonl
+router:
+  enabled: false
+  name: moc
+chunking:
+  type: semantic_breakpoint
+  dataset: qasper
+  save_chunks: false
+  embedding_model: stella
+  embedding_batch_size: 32
+  similarity_metric: cosine
+  show_embedding_progress: false
+  threshold_type: gradient
+  threshold_value: 70
+embedding:
+  name: stella
+  batch_size: 32
+  normalize_embeddings: true
+  show_progress_bar: false
+retrieval:
+  enabled: true
+  name: faiss
+  distance: cosine
+  normalize: true
+evaluation:
+  intrinsic_model:
+    backend: lexical
+  extrinsic_tasks_to_run:
+  - document_retrieval
+  - evidence_retrieval
+  - answer_generation

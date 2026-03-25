@@ -31,7 +31,7 @@ chunking:
   dbscan_min_samples: 5
 embedding:
   name: mpnet
-  batch_size: 32
+  batch_size: 64
   normalize_embeddings: true
   show_progress_bar: false
 retrieval:

@@ -11,6 +11,7 @@ File presenti:
 - `precompute_split_embeddings.py`: pre-calcola embeddings per ogni riga dei file split (`sentences.jsonl`) e li salva dentro il JSONL (`embeddings.<model/cache_key>`), con stato `state_embeddings_<cache_key>.json`.
 - `run_experiments_resume.py`: lancia in batch tutti i YAML di una cartella con stato persistente su JSON; se interrompi l'esecuzione, rilanciando riparte dagli esperimenti mancanti.
 - `run_extrinsic_eval.py`: script separato per la sola valutazione extrinsic. Viene richiamato anche dall'orchestrator tramite subprocess quando `evaluation.extrinsic` è abilitato.
+- `audit_extrinsic_coverage.py`: dato un dataset e una cartella YAML, fa audit completo (YAML/indici/tabelle estrinseche mancanti) e puo' lanciare il backfill delle evaluation extrinsic mancanti, poi rigenera le tabelle aggregate del dataset.
 - `prewarm_normalized_datasets.py`: legge i config esperimenti, deduplica i dataset richiesti e prepara in anticipo i cache normalizzati sotto `data/normalized/` (o root custom), così i run successivi evitano i tempi di download/conversione.
 - `download_datasets.py`: utility per verificare o scaricare i dataset raw usando `DatasetFactory` e i processor definiti in `src/datasets/`.
 - `download_qasper_hf_to_normalized.py`: converte QASPER da Hugging Face nel formato normalizzato interno (`documents.jsonl`, `queries.json`, `qrels`, `evidences`, `answers`).
@@ -24,6 +25,7 @@ Collegamenti principali:
 - `precompute_split_embeddings.py` -> `src/embeddings/` + aggiornamento in-place dei JSONL di split
 - `run_experiments_resume.py` -> `run_pipeline.py` (in loop sui config YAML)
 - `run_extrinsic_eval.py` -> `src/evaluation/extrinsic/`
+- `audit_extrinsic_coverage.py` -> `src/config/loader.py`, `scripts/run_extrinsic_eval.py`, `scripts/build_tables_graphs.py`
 - `prewarm_normalized_datasets.py` -> `src/config/loader.py`, `src/datasets/`
 - `download_datasets.py` -> `src/datasets/`
 
@@ -34,6 +36,7 @@ Note aggiornate:
 - `prewarm_normalized_datasets.py` unisce anche i task extrinsic richiesti dai vari YAML (`document_retrieval`, `evidence_retrieval`, `answer_generation`) per preparare cache coerenti prima dei run batch.
 - `download_datasets.py` supporta `--tasks` (lista separata da virgole) e controlli best-effort per artifact opzionali (`--evidence-path`, `--answers-path`) senza hard-fail.
 - `run_experiments_resume.py` non riesegue i config con stato `completed`; per rieseguire quelli `failed` usare `--retry-failed`.
+- `audit_extrinsic_coverage.py` supporta `--dry-run` per solo audit senza calcoli; senza `--dry-run` tenta il backfill dei CSV extrinsic mancanti solo se trova indice + metadata validi.
 
 Uso rapido batch resume:
 

@@ -1,0 +1,48 @@
+experiment_name: techqa_SLINK_04
+evaluation_profile: default
+execution_profile: default
+dataset:
+  name: beir/techqa
+  data_dir: data/raw/beir/techqa
+  normalized_dir: data/normalized/beir/techqa
+  split: test
+  download_if_missing: true
+  use_normalized_if_available: true
+  save_normalized: true
+split:
+  type: sentence
+  model: en_core_web_sm
+  save_output: true
+  output_path: data/processed/techqa/sentences.jsonl
+router:
+  enabled: false
+  name: moc
+chunking:
+  type: semantic_clustering
+  dataset: techqa
+  save_chunks: false
+  embedding_model: bge
+  embedding_batch_size: 64
+  similarity_metric: cosine
+  show_embedding_progress: false
+  clustering_mode: single_linkage
+  lambda: 0.75
+  number_of_chunks: 8
+  stop_distance_threshold: 0.5
+embedding:
+  name: bge
+  batch_size: 64
+  normalize_embeddings: true
+  show_progress_bar: false
+retrieval:
+  enabled: true
+  name: faiss
+  distance: cosine
+  normalize: true
+evaluation:
+  intrinsic_model:
+    backend: lexical
+  extrinsic_tasks_to_run:
+  - document_retrieval
+  - evidence_retrieval
+  - answer_generation

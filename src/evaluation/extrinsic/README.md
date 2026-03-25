@@ -23,7 +23,6 @@ Collegamenti:
 Nota importante sullo stato attuale:
 - l'evaluator `document_retrieval` ricarica l'embedder tramite `src.embeddings.factory.EmbedderFactory`, quindi supporta tutti gli embedder registrati nella factory;
 - per i retriever sono supportati `numpy` e `faiss`;
-- e' possibile campionare un sottoinsieme di query con `evaluation.extrinsic_tasks.document_retrieval.query_sample_size`.
 - i task extrinsic attivi sono selezionati da `evaluation.extrinsic_tasks_to_run` (lista). Se assente, fallback retrocompatibile a `evaluation.extrinsic_evaluator`.
 - per `answer_generation`, il modello BERTScore paper-aligned e' `microsoft/deberta-xlarge-mnli`;
 - se `generation_model.name` non e' `gpt-4o-mini`, la run viene marcata `partial` per segnalare che la generazione non e' identica al paper.

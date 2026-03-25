@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
@@ -1303,7 +1304,7 @@ class ExperimentOrchestrator:
             module_name = module_name[:-3]
 
         cmd = [
-            "python",
+            sys.executable,
             "-m",
             module_name,
         ]
