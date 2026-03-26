@@ -193,7 +193,7 @@ Servono solo se non vuoi usare la risoluzione automatica su normalized dataset (
 Seleziona come trasformare i documenti in unita' testuali.
 
 Campi piu' usati:
-- `type`: `sentence` oppure `proposition`.
+- `type`: `sentence` oppure `contextualizer`.
 - `model`: modello spaCy per `sentence`.
 - `save_output`: salva le split units su disco.
 - `output_path`: path del JSONL prodotto.
@@ -291,8 +291,24 @@ Override extrinsic piu' comuni nel file esperimento:
 - `extrinsic_tasks_to_run`
 - `extrinsic_tasks.<task>.ks`
 - opzionalmente `extrinsic_tasks.document_retrieval.normalized_dataset_dir` (per dataset con layout custom)
+- opzionalmente `extrinsic_tasks.document_retrieval.query_subset_size` (es. `100`)
+- opzionalmente `extrinsic_tasks.document_retrieval.query_subset_seed` (default `42`)
+- opzionalmente `extrinsic_tasks.document_retrieval.include_full_query_set` (default `true`)
 
 Se non specifichi path espliciti per evidences/answers, vengono risolti automaticamente a partire dalla normalized dir.
+
+Esempio (document retrieval full + subset da 100 query):
+
+```yaml
+evaluation:
+  extrinsic_tasks_to_run: [document_retrieval]
+  extrinsic_tasks:
+    document_retrieval:
+      ks: [1, 3, 5, 10]
+      query_subset_size: 100
+      query_subset_seed: 42
+      include_full_query_set: true
+```
 
 ## Template minimi per i casi piu' comuni
 

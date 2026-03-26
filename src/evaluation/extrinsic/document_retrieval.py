@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -52,6 +53,7 @@ class DocumentRetrievalEvaluator(BaseExtrinsicEvaluator):
             queries=queries,
             qrels=qrels,
         )
+        query_subsets = self._resolve_query_subsets(config=config, ordered_qids=ordered_qids)
 
         embedder = self._load_embedder(embedding_cfg)
         retriever = self._load_retriever(retrieval_cfg)
@@ -63,38 +65,54 @@ class DocumentRetrievalEvaluator(BaseExtrinsicEvaluator):
         all_indices = search_output["indices"]
         all_scores = search_output["scores"]
 
-        ir_qrels: dict[str, dict[str, int]] = {}
-        ir_run: dict[str, dict[str, float]] = {}
         ranked_doc_ids_by_qid: dict[str, list[str]] = {}
+        ranked_doc_scores_by_qid: dict[str, list[tuple[str, float]]] = {}
 
         for row_idx, qid in enumerate(ordered_qids):
-            gold_doc_ids = qrels[qid]
             ranked_doc_scores = self._aggregate_chunk_hits_to_documents(
                 chunk_indices=all_indices[row_idx].tolist(),
                 chunk_scores=all_scores[row_idx].tolist(),
                 items=items,
             )
             ranked_doc_ids_by_qid[qid] = [doc_id for doc_id, _ in ranked_doc_scores]
+            ranked_doc_scores_by_qid[qid] = ranked_doc_scores
 
-            ir_qrels[qid] = {doc_id: 1 for doc_id in gold_doc_ids}
-            ir_run[qid] = {doc_id: float(score) for doc_id, score in ranked_doc_scores}
-        metrics = self._compute_metrics(
-            ks=ks,
-            ir_qrels=ir_qrels,
-            ir_run=ir_run,
-            ranked_doc_ids_by_qid=ranked_doc_ids_by_qid,
-            qrels=qrels,
-        )
-        return self._build_rows(
-            ks=ks,
-            metrics=metrics,
-            run_context=run_context,
-            num_queries=len(ordered_qids),
-            queries_path=queries_path,
-            qrels_path=qrels_path,
-            index_path=index_path,
-            index_metadata_path=index_metadata_path,
-        )
+        rows: list[dict[str, Any]] = []
+        for subset in query_subsets:
+            subset_qids = subset["ordered_qids"]
+            subset_qrels = {qid: qrels[qid] for qid in subset_qids}
+            subset_ranked_doc_ids_by_qid = {qid: ranked_doc_ids_by_qid[qid] for qid in subset_qids}
+            subset_ir_qrels = {
+                qid: {doc_id: 1 for doc_id in subset_qrels[qid]}
+                for qid in subset_qids
+            }
+            subset_ir_run = {
+                qid: {doc_id: float(score) for doc_id, score in ranked_doc_scores_by_qid[qid]}
+                for qid in subset_qids
+            }
+            metrics = self._compute_metrics(
+                ks=ks,
+                ir_qrels=subset_ir_qrels,
+                ir_run=subset_ir_run,
+                ranked_doc_ids_by_qid=subset_ranked_doc_ids_by_qid,
+                qrels=subset_qrels,
+            )
+            rows.extend(
+                self._build_rows(
+                    ks=ks,
+                    metrics=metrics,
+                    run_context=run_context,
+                    num_queries=len(subset_qids),
+                    queries_path=queries_path,
+                    qrels_path=qrels_path,
+                    index_path=index_path,
+                    index_metadata_path=index_metadata_path,
+                    query_subset_label=str(subset["label"]),
+                    query_subset_size_requested=subset["size_requested"],
+                    query_subset_seed=subset["seed"],
+                )
+            )
+        return rows
 
     def _load_eval_inputs(
         self,
@@ -131,28 +149,33 @@ class DocumentRetrievalEvaluator(BaseExtrinsicEvaluator):
         ranked_doc_ids_by_qid: dict[str, list[str]],
         qrels: dict[str, set[str]],
     ) -> dict[int, dict[str, float]]:
-        precision_measures_by_k = {k: ir_measures.P @ k for k in ks}
-        recall_measures_by_k = {k: ir_measures.R @ k for k in ks}
         ndcg_measures_by_k = {k: ir_measures.nDCG @ k for k in ks}
 
         aggregate_results = ir_measures.calc_aggregate(
-            list(precision_measures_by_k.values())
-            + list(recall_measures_by_k.values())
-            + list(ndcg_measures_by_k.values()),
+            list(ndcg_measures_by_k.values()),
             ir_qrels,
             ir_run,
         )
 
         metrics: dict[int, dict[str, float]] = {}
         for k in ks:
+            macro_precision, macro_recall, macro_f1 = self._macro_prf_at_k(
+                ranked_doc_ids_by_qid=ranked_doc_ids_by_qid,
+                qrels=qrels,
+                k=k,
+            )
+            micro_precision, micro_recall, micro_f1 = self._micro_prf_at_k(
+                ranked_doc_ids_by_qid=ranked_doc_ids_by_qid,
+                qrels=qrels,
+                k=k,
+            )
             metrics[k] = {
-                "precision": float(aggregate_results.get(precision_measures_by_k[k], 0.0)),
-                "recall": float(aggregate_results.get(recall_measures_by_k[k], 0.0)),
-                "f1": self._macro_f1_at_k(
-                    ranked_doc_ids_by_qid=ranked_doc_ids_by_qid,
-                    qrels=qrels,
-                    k=k,
-                ),
+                "macro_precision": macro_precision,
+                "macro_recall": macro_recall,
+                "macro_f1": macro_f1,
+                "micro_precision": micro_precision,
+                "micro_recall": micro_recall,
+                "micro_f1": micro_f1,
                 "dcg": self._macro_dcg_at_k(
                     ranked_doc_ids_by_qid=ranked_doc_ids_by_qid,
                     qrels=qrels,
@@ -173,6 +196,9 @@ class DocumentRetrievalEvaluator(BaseExtrinsicEvaluator):
         qrels_path: Path,
         index_path: Path,
         index_metadata_path: Path,
+        query_subset_label: str,
+        query_subset_size_requested: int | None,
+        query_subset_seed: int | None,
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for k in ks:
@@ -184,14 +210,24 @@ class DocumentRetrievalEvaluator(BaseExtrinsicEvaluator):
             )
             row.update(
                 {
-                    "precision": metrics[k]["precision"],
-                    "recall": metrics[k]["recall"],
-                    "f1": metrics[k]["f1"],
+                    # Legacy columns mirror macro metrics for compatibility.
+                    "precision": metrics[k]["macro_precision"],
+                    "recall": metrics[k]["macro_recall"],
+                    "f1": metrics[k]["macro_f1"],
+                    "macro_precision": metrics[k]["macro_precision"],
+                    "macro_recall": metrics[k]["macro_recall"],
+                    "macro_f1": metrics[k]["macro_f1"],
+                    "micro_precision": metrics[k]["micro_precision"],
+                    "micro_recall": metrics[k]["micro_recall"],
+                    "micro_f1": metrics[k]["micro_f1"],
                     "dcg": metrics[k]["dcg"],
                     "ndcg": metrics[k]["ndcg"],
                     "num_queries": num_queries,
                     "queries_path": str(queries_path),
                     "qrels_path": str(qrels_path),
+                    "query_subset": query_subset_label,
+                    "query_subset_size_requested": query_subset_size_requested,
+                    "query_subset_seed": query_subset_seed,
                 }
             )
             rows.append(row)
@@ -259,31 +295,134 @@ class DocumentRetrievalEvaluator(BaseExtrinsicEvaluator):
         return float(sum(values) / len(values)) if values else 0.0
 
     @staticmethod
-    def _macro_f1_at_k(
+    def _macro_prf_at_k(
         *,
         ranked_doc_ids_by_qid: dict[str, list[str]],
         qrels: dict[str, set[str]],
         k: int,
-    ) -> float:
+    ) -> tuple[float, float, float]:
         if not ranked_doc_ids_by_qid:
-            return 0.0
+            return 0.0, 0.0, 0.0
 
-        values: list[float] = []
+        precisions: list[float] = []
+        recalls: list[float] = []
+        f1s: list[float] = []
         for qid, ranked_doc_ids in ranked_doc_ids_by_qid.items():
             gold_doc_ids = qrels.get(qid, set())
             retrieved_at_k = ranked_doc_ids[:k]
-            true_positives = sum(1 for doc_id in retrieved_at_k if doc_id in gold_doc_ids)
-            precision = float(true_positives) / float(k) if k > 0 else 0.0
+            true_positives = float(sum(1 for doc_id in retrieved_at_k if doc_id in gold_doc_ids))
+            retrieved_count = float(len(retrieved_at_k))
+            precision = true_positives / retrieved_count if retrieved_count > 0.0 else 0.0
             recall = (
-                float(true_positives) / float(len(gold_doc_ids))
+                true_positives / float(len(gold_doc_ids))
                 if gold_doc_ids
                 else 0.0
             )
+            precisions.append(precision)
+            recalls.append(recall)
             if precision + recall == 0.0:
-                values.append(0.0)
+                f1s.append(0.0)
             else:
-                values.append((2.0 * precision * recall) / (precision + recall))
-        return float(sum(values) / len(values)) if values else 0.0
+                f1s.append((2.0 * precision * recall) / (precision + recall))
+        return (
+            float(sum(precisions) / len(precisions)) if precisions else 0.0,
+            float(sum(recalls) / len(recalls)) if recalls else 0.0,
+            float(sum(f1s) / len(f1s)) if f1s else 0.0,
+        )
+
+    @staticmethod
+    def _micro_prf_at_k(
+        *,
+        ranked_doc_ids_by_qid: dict[str, list[str]],
+        qrels: dict[str, set[str]],
+        k: int,
+    ) -> tuple[float, float, float]:
+        if not ranked_doc_ids_by_qid:
+            return 0.0, 0.0, 0.0
+
+        total_tp = 0.0
+        total_retrieved = 0.0
+        total_relevant = 0.0
+
+        for qid, ranked_doc_ids in ranked_doc_ids_by_qid.items():
+            gold_doc_ids = qrels.get(qid, set())
+            retrieved_at_k = ranked_doc_ids[:k]
+            tp = float(sum(1 for doc_id in retrieved_at_k if doc_id in gold_doc_ids))
+            total_tp += tp
+            total_retrieved += float(len(retrieved_at_k))
+            total_relevant += float(len(gold_doc_ids))
+
+        precision = total_tp / total_retrieved if total_retrieved > 0.0 else 0.0
+        recall = total_tp / total_relevant if total_relevant > 0.0 else 0.0
+        f1 = (2.0 * precision * recall) / (precision + recall) if precision + recall > 0.0 else 0.0
+        return precision, recall, f1
+
+    @staticmethod
+    def _resolve_query_subsets(
+        *,
+        config: dict[str, Any],
+        ordered_qids: list[str],
+    ) -> list[dict[str, Any]]:
+        task_cfg = (
+            config.get("evaluation", {})
+            .get("extrinsic_tasks", {})
+            .get("document_retrieval", {})
+        )
+        seed_raw = task_cfg.get("query_subset_seed", 42)
+        seed = int(seed_raw) if isinstance(seed_raw, int) else 42
+        sample_size_raw = task_cfg.get("query_subset_size")
+        include_full = bool(task_cfg.get("include_full_query_set", True))
+
+        subsets: list[dict[str, Any]] = []
+        seen_labels: set[str] = set()
+
+        def _push_subset(
+            *,
+            label: str,
+            selected_qids: list[str],
+            size_requested: int | None,
+            subset_seed: int | None,
+        ) -> None:
+            if label in seen_labels:
+                return
+            seen_labels.add(label)
+            subsets.append(
+                {
+                    "label": label,
+                    "ordered_qids": selected_qids,
+                    "size_requested": size_requested,
+                    "seed": subset_seed,
+                }
+            )
+
+        if include_full:
+            _push_subset(
+                label="all",
+                selected_qids=ordered_qids,
+                size_requested=None,
+                subset_seed=None,
+            )
+
+        if isinstance(sample_size_raw, int) and sample_size_raw > 0:
+            target_size = min(sample_size_raw, len(ordered_qids))
+            rng = random.Random(seed)
+            sampled = set(rng.sample(ordered_qids, target_size))
+            sampled_qids = [qid for qid in ordered_qids if qid in sampled]
+            _push_subset(
+                label=f"sample_{target_size}",
+                selected_qids=sampled_qids,
+                size_requested=sample_size_raw,
+                subset_seed=seed,
+            )
+
+        if not subsets:
+            _push_subset(
+                label="all",
+                selected_qids=ordered_qids,
+                size_requested=None,
+                subset_seed=None,
+            )
+        return subsets
 
     @staticmethod
     def _load_embedder(embedding_cfg: dict[str, Any]):

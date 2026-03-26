@@ -8,7 +8,7 @@ File presenti:
 - `base.py`: interfaccia `BaseExtrinsicEvaluator`.
 - `common.py`: helper condivisi per contesto di run e costruzione righe output.
 - `factory.py`: factory per scegliere l'evaluator richiesto.
-- `document_retrieval.py`: evaluator principale. Carica query e qrels, ricarica embedder e retriever, esegue la ricerca e calcola macro precision/recall/F1 e DCG/NDCG a vari `k` (DCG/NDCG via `ir_measures`).
+- `document_retrieval.py`: evaluator principale. Carica query e qrels, ricarica embedder e retriever, esegue la ricerca e calcola macro+micro precision/recall/F1 e DCG/NDCG a vari `k` (NDCG via `ir_measures`).
 - `evidence_retrieval.py`: evaluator evidence-level. Recupera top-k chunk e calcola precision/recall/F1 sentence-level misurando quante evidence sentence gold sono presenti nei chunk recuperati.
 - `answer_generation.py`: evaluator answer-level. Genera risposta dai top-5 chunk (paper setting) e calcola `qa_similarity` (coseno query-risposta) + `bertscore_f1`.
 - `io.py`: risolve i path a query, qrels e metadata indice, e carica questi file dal disco.
@@ -31,3 +31,14 @@ Scelta di aggregazione chunk -> documento (per metriche doc-level come DCG/NDCG)
 - il retrieval opera sui chunk, mentre la valutazione `document_retrieval` e' a livello documento;
 - quando piu' chunk appartengono allo stesso documento, il punteggio documento viene aggregato con strategia `max`;
 - quindi, per ogni query, il punteggio del documento e' il massimo score tra i chunk recuperati di quel documento.
+
+Opzioni utili per `document_retrieval` in `evaluation.extrinsic_tasks.document_retrieval`:
+- `query_subset_size`: intero > 0. Se presente, valuta anche un sottoinsieme casuale di query (es. `100`).
+- `query_subset_seed`: seed del sampling (default `42`).
+- `include_full_query_set`: se `true` (default), oltre al subset calcola anche il full set.
+
+Nel CSV di output, per ciascun `k`, vengono salvati:
+- colonne legacy `precision`, `recall`, `f1` (allineate alle metriche macro);
+- nuove colonne `macro_precision`, `macro_recall`, `macro_f1`;
+- nuove colonne `micro_precision`, `micro_recall`, `micro_f1`;
+- metadati subset: `query_subset`, `query_subset_size_requested`, `query_subset_seed`.

@@ -61,8 +61,10 @@ class ExperimentOrchestrator:
     def _run_streaming_pipeline(self, dataset_output: Any) -> None:
         split_cfg = self.config["split"]
         split_type = split_cfg["type"]
-        if split_type != "sentence":
-            raise ValueError("Streaming mode currently supports only split.type='sentence'.")
+        supported_split_types = {"sentence", "contextualizer"}
+        if split_type not in supported_split_types:
+            supported = ", ".join(sorted(supported_split_types))
+            raise ValueError(f"Streaming mode currently supports only split.type in {{{supported}}}.")
 
         router_cfg = self.config.get("router", {})
         router_enabled = bool(router_cfg.get("enabled", False))
@@ -152,10 +154,25 @@ class ExperimentOrchestrator:
                 "[INFO] Split shortcut activated: reusing saved split units from "
                 f"{split_path_obj}."
             )
+            print(
+                "[INFO] Split mode: full reuse "
+                f"(split_type={split_type}, next_doc_idx={next_doc_idx}, total_docs={expected_docs})."
+            )
         elif split_completed and not split_expected_matches:
             print(
                 "[INFO] split_state expected_docs mismatch with current dataset; "
                 "saved split units will not be reused."
+            )
+        elif next_doc_idx > 0:
+            print(
+                "[INFO] Split resume detected: continuing incremental split from "
+                f"doc index {next_doc_idx}/{expected_docs} "
+                f"(split_type={split_type}, split_state={split_state_path})."
+            )
+        else:
+            print(
+                "[INFO] Split mode: fresh run "
+                f"(split_type={split_type}, output={split_path_obj})."
             )
 
         total_docs = int(stream_state.get("total_docs_processed", 0))
@@ -174,7 +191,7 @@ class ExperimentOrchestrator:
             "split_units_path": str(split_path_obj) if split_path_obj else None,
             "documents": [],
             "metadata": {
-                "split_type": "sentence",
+                "split_type": split_type,
                 "spacy_model": split_components["model_name"],
                 "num_documents": expected_docs,
                 "num_units": total_units,
@@ -1256,7 +1273,9 @@ class ExperimentOrchestrator:
     def _resolve_split_state_path(self, split_path: Path | None) -> Path | None:
         if split_path is None:
             return None
-        return split_path.parent / "split_state.json"
+        # Keep split-state isolated per split output file to avoid conflicts
+        # when multiple split variants share the same directory.
+        return split_path.parent / f"split_state.json"
 
     def _load_split_state(self, state_path: Path | None) -> dict[str, Any]:
         if state_path is None or not state_path.exists():

@@ -12,6 +12,9 @@ File presenti:
 - `run_experiments_resume.py`: lancia in batch tutti i YAML di una cartella con stato persistente su JSON; se interrompi l'esecuzione, rilanciando riparte dagli esperimenti mancanti.
 - `run_extrinsic_eval.py`: script separato per la sola valutazione extrinsic. Viene richiamato anche dall'orchestrator tramite subprocess quando `evaluation.extrinsic` è abilitato.
 - `audit_extrinsic_coverage.py`: dato un dataset e una cartella YAML, fa audit completo (YAML/indici/tabelle estrinseche mancanti) e puo' lanciare il backfill delle evaluation extrinsic mancanti, poi rigenera le tabelle aggregate del dataset.
+- `build_tables_graphs.py`: aggrega i risultati in tabelle/plot per extrinsic (`results/extrinsic/*.csv`) e intrinsic (`results/intrinsic/*.json`, escludendo `*_global.json`).
+  Salva gli output in gerarchia `output_dir/<dataset>/<task>/{tables,plots}` (quindi prima dataset, poi task/metrica).
+  Produce anche `global/metrics_long.csv` in formato tidy (dataset/task/method/metric/k/value/source) ordinato per dataset->task->metrica.
 - `prewarm_normalized_datasets.py`: legge i config esperimenti, deduplica i dataset richiesti e prepara in anticipo i cache normalizzati sotto `data/normalized/` (o root custom), così i run successivi evitano i tempi di download/conversione.
 - `download_datasets.py`: utility per verificare o scaricare i dataset raw usando `DatasetFactory` e i processor definiti in `src/datasets/`.
 - `download_qasper_hf_to_normalized.py`: converte QASPER da Hugging Face nel formato normalizzato interno (`documents.jsonl`, `queries.json`, `qrels`, `evidences`, `answers`).

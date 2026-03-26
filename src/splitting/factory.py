@@ -3,14 +3,14 @@ from __future__ import annotations
 from typing import Dict, Type
 
 from src.splitting.base import BaseSplitter
-from src.splitting.proposition import PropositionSplitter
+from src.splitting.contextualizer import ContextualizerSplitter
 from src.splitting.sentence import SentenceSplitter
 
 
 class SplitterFactory:
     _registry: Dict[str, Type[BaseSplitter]] = {
         "sentence": SentenceSplitter,
-        "proposition": PropositionSplitter,
+        "contextualizer": ContextualizerSplitter,
     }
 
     @classmethod
