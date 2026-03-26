@@ -8,11 +8,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.datasets.factory import DatasetFactory
+from src.datasets.service import ensure_dataset_prepared
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Download and prepare raw datasets under data/raw/.")
+    parser = argparse.ArgumentParser(description="Prepare normalized datasets in a PyTerrier-first format.")
     parser.add_argument(
         "--dataset",
         required=True,
@@ -21,17 +21,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-dir",
         default=None,
-        help="Optional explicit target directory. Defaults to data/raw/<dataset_name>",
+        help="Optional explicit normalized target directory. Defaults to data/normalized/<dataset_name>",
     )
     parser.add_argument(
         "--split",
         default=None,
-        help="Optional dataset split (e.g. train/dev/test). If omitted, processor default is used.",
+        help="Optional dataset split (e.g. train/dev/test). If omitted, dataset default is used.",
     )
     parser.add_argument(
         "--no-download",
         action="store_true",
-        help="Only validate local presence; do not download missing files.",
+        help="Only validate local presence; do not build missing normalized data.",
     )
     parser.add_argument(
         "--tasks",
@@ -103,22 +103,20 @@ def _check_optional_task_artifacts(
 
 def main() -> None:
     args = parse_args()
-    processor = DatasetFactory.create(args.dataset)
-
     config = {
         "name": args.dataset,
         "download_if_missing": not args.no_download,
     }
     if args.data_dir:
-        config["data_dir"] = args.data_dir
+        config["normalized_dir"] = args.data_dir
     if args.split:
         config["split"] = args.split
 
     requested_tasks = _parse_tasks(args.tasks)
     print(f"[INFO] Requested task checks: {requested_tasks}")
 
-    raw_path = processor.ensure_available(config)
-    print(f"[OK] Dataset available at: {raw_path}")
+    normalized_path = ensure_dataset_prepared(config, force_rebuild=False)
+    print(f"[OK] Dataset available at: {normalized_path}")
     _check_optional_task_artifacts(
         tasks=requested_tasks,
         evidence_path=args.evidence_path,

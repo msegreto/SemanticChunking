@@ -1,29 +1,28 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
+import pandas as pd
 from src.embeddings.factory import EmbedderFactory
-from src.retrieval.factory import RetrieverFactory
 
-from .base import BaseExtrinsicEvaluator
 from .common import build_base_row, build_run_context
 from .io import (
+    get_extrinsic_task_cfg,
     load_answers,
-    load_index_metadata,
+    load_items_by_docno,
     load_queries,
+    load_run_tsv,
     resolve_answers_path,
     resolve_queries_path,
 )
 
 
-class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
+class AnswerGenerationEvaluator:
     _bertscorer_cache: dict[tuple[str, str, bool, str], Any] = {}
     PAPER_TOP_K_FOR_GENERATION = 5
     PAPER_BERTSCORE_MODEL = "microsoft/deberta-xlarge-mnli"
-    GENERATION_MODEL_LABEL = "extractive-no-llm"
 
     @property
     def task_name(self) -> str:
@@ -33,10 +32,12 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
         self,
         *,
         config: dict[str, Any],
-        index_path: Path,
-        index_metadata_path: Path,
+        retrieval_output: dict[str, Any],
         ks: Sequence[int],
     ) -> list[dict[str, Any]]:
+        manifest_path = Path(str(retrieval_output.get("manifest_path", "")))
+        run_path = Path(str(retrieval_output.get("run_path", "")))
+        items_path = Path(str(retrieval_output.get("items_path", "")))
         try:
             answers_file = resolve_answers_path(config)
         except Exception:
@@ -46,12 +47,13 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
             return self._build_rows(
                 config=config,
                 ks=[None],
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                manifest_path=manifest_path,
+                run_path=run_path,
+                items_path=items_path,
                 status="skipped",
                 details="Task skipped: empty ks.",
                 answers_path=None,
-                generation_model=self.GENERATION_MODEL_LABEL,
+                generation_model=None,
             )
 
         resolved_ks = sorted({int(k) for k in ks})
@@ -60,57 +62,51 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
             return self._build_rows(
                 config=config,
                 ks=resolved_ks,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                manifest_path=manifest_path,
+                run_path=run_path,
+                items_path=items_path,
                 status="skipped",
                 details="Task skipped: missing answers_path in YAML.",
                 answers_path=None,
-                generation_model=self.GENERATION_MODEL_LABEL,
+                generation_model=None,
             )
 
         if not answers_file.exists():
             return self._build_rows(
                 config=config,
                 ks=resolved_ks,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                manifest_path=manifest_path,
+                run_path=run_path,
+                items_path=items_path,
                 status="skipped",
                 details=f"Task skipped: answer annotations file not found at {answers_file}.",
                 answers_path=str(answers_file),
-                generation_model=self.GENERATION_MODEL_LABEL,
+                generation_model=None,
             )
 
         queries_path = resolve_queries_path(config)
         queries = load_queries(queries_path)
         answers = load_answers(answers_file)
-        items = load_index_metadata(index_metadata_path)["items"]
+        items_by_docno = load_items_by_docno(items_path)
+        run_by_qid = load_run_tsv(run_path)
 
         ordered_qids = [qid for qid in queries.keys() if qid in answers]
         if not ordered_qids:
             return self._build_rows(
                 config=config,
                 ks=resolved_ks,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                manifest_path=manifest_path,
+                run_path=run_path,
+                items_path=items_path,
                 status="skipped",
                 details="Task skipped: no overlapping query ids between queries and answers.",
                 answers_path=str(answers_file),
-                generation_model=self.GENERATION_MODEL_LABEL,
+                generation_model=None,
             )
 
-        retrieval_cfg = config["retrieval"]
+        generation_cfg = self._resolve_generation_config(config)
         embedding_cfg = config["embedding"]
         embedder = self._load_embedder(embedding_cfg)
-        retriever = self._load_retriever(retrieval_cfg)
-        retriever.load_index(str(index_path), str(index_metadata_path))
-
-        query_texts = [queries[qid] for qid in ordered_qids]
-        query_embeddings = self._encode_queries(embedder, query_texts, embedding_cfg)
-        search_output = retriever.search(
-            query_embeddings,
-            top_k=self.PAPER_TOP_K_FOR_GENERATION,
-        )
-        all_indices = search_output["indices"]
 
         evaluable_qids = [
             qid
@@ -122,31 +118,27 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
             return self._build_rows(
                 config=config,
                 ks=resolved_ks,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                manifest_path=manifest_path,
+                run_path=run_path,
+                items_path=items_path,
                 status="skipped",
                 details="Task skipped: no answerable queries with reference answers found.",
                 answers_path=str(answers_file),
-                generation_model=self.GENERATION_MODEL_LABEL,
+                generation_model=None,
             )
 
-        row_idx_by_qid = {qid: idx for idx, qid in enumerate(ordered_qids)}
         refs_by_qid = {
             qid: [ref for ref in answers[qid]["reference_answers"] if ref.strip()]
             for qid in evaluable_qids
         }
 
-        generated_answers: list[str] = []
-        for qid in evaluable_qids:
-            row_idx = row_idx_by_qid[qid]
-            top_chunk_indices = all_indices[row_idx].tolist()[: self.PAPER_TOP_K_FOR_GENERATION]
-            candidate_texts = self._collect_chunk_texts(top_chunk_indices, items)
-            generated_answers.append(
-                self._generate_answer_from_chunks(
-                    query=queries[qid],
-                    candidate_chunk_texts=candidate_texts,
-                )
-            )
+        generated_answers, generation_notes, generation_model = self._generate_answers_with_pyterrier_rag(
+            generation_cfg=generation_cfg,
+            evaluable_qids=evaluable_qids,
+            queries=queries,
+            run_by_qid=run_by_qid,
+            items_by_docno=items_by_docno,
+        )
 
         generated_embeddings, _ = embedder.encode_texts(generated_answers, embedding_cfg)
         generated_embeddings = np.asarray(generated_embeddings, dtype=np.float32)
@@ -180,12 +172,12 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
         }
 
         notes: list[str] = []
-        notes.append("generation backend is extractive heuristic; no external LLM used")
-        if any(k != self.PAPER_TOP_K_FOR_GENERATION for k in resolved_ks):
+        if generation_notes:
+            notes.extend(generation_notes)
+        if any(k != generation_cfg["top_k"] for k in resolved_ks):
             notes.append(
-                "paper uses top-5 chunks for answer generation; metrics replicated across requested ks"
+                f"generation used top-{generation_cfg['top_k']} chunks; metrics replicated across requested ks"
             )
-        notes.append("paper uses LLM-generated answers; this run uses extractive generation")
         if bertscore_warning:
             notes.append(f"BERTScore unavailable: {bertscore_warning}")
 
@@ -198,11 +190,12 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
             num_queries=len(ordered_qids),
             num_evaluable_queries=len(evaluable_qids),
             queries_path=str(queries_path),
-            index_path=index_path,
-            index_metadata_path=index_metadata_path,
+            manifest_path=manifest_path,
+            run_path=run_path,
+            items_path=items_path,
             details=details,
             answers_path=str(answers_file),
-            generation_model=self.GENERATION_MODEL_LABEL,
+            generation_model=generation_model,
         )
 
     @staticmethod
@@ -213,76 +206,125 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
         return EmbedderFactory.create(embedder_name.strip())
 
     @staticmethod
-    def _load_retriever(retrieval_cfg: dict[str, Any]):
-        retriever_name = retrieval_cfg.get("name", "")
-        return RetrieverFactory.create(str(retriever_name).strip().lower())
+    def _resolve_generation_config(config: dict[str, Any]) -> dict[str, Any]:
+        task_cfg = get_extrinsic_task_cfg(config, "answer_generation")
+        top_k = int(task_cfg.get("top_k", AnswerGenerationEvaluator.PAPER_TOP_K_FOR_GENERATION))
+        if top_k <= 0:
+            raise ValueError("'evaluation.extrinsic_tasks.answer_generation.top_k' must be a positive integer.")
+        reader_model = str(task_cfg.get("reader_model", "google/flan-t5-base")).strip()
+        reader_backend = str(task_cfg.get("reader_backend", "seq2seqlm")).strip().lower().replace("-", "_")
+        return {
+            "top_k": top_k,
+            "reader_model": reader_model,
+            "reader_backend": reader_backend,
+        }
 
-    @staticmethod
-    def _encode_queries(embedder, query_texts: list[str], embedding_cfg: dict[str, Any]):
-        query_embeddings, _ = embedder.encode_texts(query_texts, embedding_cfg)
-        return query_embeddings
-
-    @staticmethod
-    def _collect_chunk_texts(chunk_indices: list[int], items: list[dict[str, Any]]) -> list[str]:
-        texts: list[str] = []
-        for chunk_idx in chunk_indices:
-            if chunk_idx < 0 or chunk_idx >= len(items):
-                continue
-            text = items[chunk_idx].get("text", "")
-            if isinstance(text, str) and text.strip():
-                texts.append(text.strip())
-        return texts
-
-    @staticmethod
-    def _normalize_tokens(text: str) -> list[str]:
-        text = text.lower()
-        text = re.sub(r"\b(a|an|the)\b", " ", text)
-        text = re.sub(r"[^a-z0-9\s]", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        return text.split() if text else []
-
-    @classmethod
-    def _sentence_score(cls, sentence: str, query_tokens: set[str]) -> float:
-        sentence_tokens = set(cls._normalize_tokens(sentence))
-        if not sentence_tokens:
-            return 0.0
-        overlap = len(sentence_tokens & query_tokens)
-        coverage = overlap / float(len(query_tokens)) if query_tokens else 0.0
-        density = overlap / float(len(sentence_tokens))
-        return 0.7 * coverage + 0.3 * density
-
-    @classmethod
-    def _generate_answer_from_chunks(
-        cls,
+    def _generate_answers_with_pyterrier_rag(
+        self,
         *,
-        query: str,
-        candidate_chunk_texts: list[str],
-    ) -> str:
-        if not candidate_chunk_texts:
-            return ""
-        query_tokens = set(cls._normalize_tokens(query))
-        candidate_sentences: list[str] = []
-        for chunk_text in candidate_chunk_texts:
-            pieces = re.split(r"(?<=[.!?])\s+|\n+", chunk_text)
-            for piece in pieces:
-                sentence = piece.strip()
-                if sentence:
-                    candidate_sentences.append(sentence)
+        generation_cfg: dict[str, Any],
+        evaluable_qids: list[str],
+        queries: dict[str, str],
+        run_by_qid: dict[str, list[dict[str, Any]]],
+        items_by_docno: dict[str, dict[str, Any]],
+    ) -> tuple[list[str], list[str], str]:
+        from pyterrier_rag import Seq2SeqLMBackend
+        from pyterrier_rag.readers import Reader
 
-        if not candidate_sentences:
-            return candidate_chunk_texts[0][:512]
+        if generation_cfg["reader_backend"] != "seq2seqlm":
+            raise ValueError(
+                "Only reader_backend=seq2seqlm is currently supported for pyterrier_rag integration."
+            )
 
-        scored = [
-            (cls._sentence_score(sentence, query_tokens), idx, sentence)
-            for idx, sentence in enumerate(candidate_sentences)
+        reader = Reader(Seq2SeqLMBackend(generation_cfg["reader_model"]))
+        reader_input = self._build_pyterrier_rag_input(
+            top_k=int(generation_cfg["top_k"]),
+            evaluable_qids=evaluable_qids,
+            queries=queries,
+            run_by_qid=run_by_qid,
+            items_by_docno=items_by_docno,
+        )
+
+        if reader_input.empty:
+            return ["" for _ in evaluable_qids], [
+                "pyterrier_rag input is empty; no chunks available for generation",
+            ], generation_cfg["reader_model"]
+
+        reader_output = reader.transform(reader_input)
+        answers_by_qid = self._extract_answers_from_reader_output(reader_output)
+
+        generated_answers: list[str] = []
+        missing_answers = 0
+        for qid in evaluable_qids:
+            answer = answers_by_qid.get(qid, "").strip()
+            if not answer:
+                missing_answers += 1
+            generated_answers.append(answer)
+
+        notes = [
+            f"generation backend is pyterrier_rag reader ({generation_cfg['reader_model']})",
         ]
-        scored.sort(key=lambda x: (-x[0], x[1]))
+        if missing_answers > 0:
+            notes.append(
+                f"pyterrier_rag returned no answer for {missing_answers} queries"
+            )
+        return generated_answers, notes, generation_cfg["reader_model"]
 
-        selected = [text for _, _, text in scored[:3]]
-        generated = " ".join(selected).strip()
-        if not generated:
-            generated = candidate_chunk_texts[0]
-        return generated[:768]
+    @staticmethod
+    def _build_pyterrier_rag_input(
+        *,
+        top_k: int,
+        evaluable_qids: list[str],
+        queries: dict[str, str],
+        run_by_qid: dict[str, list[dict[str, Any]]],
+        items_by_docno: dict[str, dict[str, Any]],
+    ) -> pd.DataFrame:
+        rows: list[dict[str, Any]] = []
+        for qid in evaluable_qids:
+            query = queries[qid]
+            for rank, hit in enumerate(run_by_qid.get(qid, [])[:top_k]):
+                docno = str(hit.get("docno") or "")
+                if not docno:
+                    continue
+                item = items_by_docno.get(docno)
+                if item is None:
+                    continue
+                text = str(item.get("text", "")).strip()
+                if not text:
+                    continue
+                rows.append(
+                    {
+                        "qid": qid,
+                        "query": query,
+                        "docno": docno,
+                        "text": text,
+                        "title": str(item.get("title", "") or ""),
+                        "score": float(hit.get("score", 0.0)),
+                        "rank": rank,
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _extract_answers_from_reader_output(reader_output: Any) -> dict[str, str]:
+        if not isinstance(reader_output, pd.DataFrame) or reader_output.empty:
+            return {}
+
+        answer_column = None
+        for candidate in ("answer", "response", "generated_text", "generation", "output", "text"):
+            if candidate in reader_output.columns:
+                answer_column = candidate
+                break
+        if answer_column is None or "qid" not in reader_output.columns:
+            return {}
+
+        answers_by_qid: dict[str, str] = {}
+        grouped = reader_output.groupby("qid", sort=False)
+        for qid, group in grouped:
+            answer = str(group.iloc[0].get(answer_column, "") or "").strip()
+            if answer:
+                answers_by_qid[str(qid)] = answer
+        return answers_by_qid
 
     @staticmethod
     def _cosine_similarity(emb_a: np.ndarray, emb_b: np.ndarray) -> float:
@@ -392,8 +434,9 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
         num_queries: int,
         num_evaluable_queries: int,
         queries_path: str,
-        index_path: Path,
-        index_metadata_path: Path,
+        manifest_path: Path,
+        run_path: Path,
+        items_path: Path,
         details: str | None,
         answers_path: str | None,
         generation_model: str | None,
@@ -410,8 +453,9 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
             row = build_base_row(
                 context=context,
                 k=k,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                retrieval_manifest_path=manifest_path,
+                retrieval_run_path=run_path,
+                retrieval_items_path=items_path,
             )
             row.update(
                 {
@@ -435,8 +479,9 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
         *,
         config: dict[str, Any],
         ks: Sequence[int | None],
-        index_path: Path,
-        index_metadata_path: Path,
+        manifest_path: Path,
+        run_path: Path,
+        items_path: Path,
         status: str,
         details: str,
         answers_path: str | None,
@@ -452,8 +497,9 @@ class AnswerGenerationEvaluator(BaseExtrinsicEvaluator):
             row = build_base_row(
                 context=context,
                 k=k,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                retrieval_manifest_path=manifest_path,
+                retrieval_run_path=run_path,
+                retrieval_items_path=items_path,
             )
             row.update(
                 {

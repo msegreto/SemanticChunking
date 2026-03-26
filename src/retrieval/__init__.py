@@ -1,3 +1,3 @@
-from src.retrieval.factory import RetrieverFactory
+from src.retrieval.transformer import RetrievalTransformer
 
-__all__ = ["RetrieverFactory"]
+__all__ = ["RetrievalTransformer"]

@@ -29,5 +29,6 @@ evaluation:
       ks: [1, 3, 5, 10]
     answer_generation:
       ks: [1, 3, 5, 10]
-      generation_model:
-        name: null
+      reader_backend: seq2seqlm
+      reader_model: google/flan-t5-base
+      top_k: 5

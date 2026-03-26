@@ -1,21 +1,25 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import spacy
 
-from src.splitting.base import BaseSplitter
-
-
-class SentenceSplitter(BaseSplitter):
+class SentenceSplitter:
     MAX_CHARS_PER_BATCH = 300_000
 
     def __init__(self):
         self._nlp_cache = {}
 
+    @staticmethod
+    def resolve_output_path(config: dict) -> Path | None:
+        output_path = config.get("output_path")
+        return Path(output_path) if output_path else None
+
     def build_streaming_components(self, config: dict) -> dict[str, Any]:
         model_name = config.get("model", "en_core_web_sm")
-        nlp = self._load_spacy_model(model_name)
+        allow_blank_fallback = bool(config.get("allow_blank_fallback", False))
+        nlp = self._load_spacy_model(model_name, allow_blank_fallback=allow_blank_fallback)
         max_chars_per_batch = min(
             self.MAX_CHARS_PER_BATCH,
             max(1, int(getattr(nlp, "max_length", 1_000_000)) - 1),
@@ -29,18 +33,18 @@ class SentenceSplitter(BaseSplitter):
     def split_document_streaming(
         self,
         *,
-        doc_id: str,
+        docno: str,
         text: str,
-        unit_id_start: int,
+        unitno_start: int,
         nlp: Any,
         max_chars_per_batch: int,
     ) -> tuple[list[dict[str, Any]], int]:
         if not text or not str(text).strip():
-            return [], unit_id_start
+            return [], unitno_start
 
         units: list[dict[str, Any]] = []
-        next_unit_id = unit_id_start
-        sentence_idx = 0
+        next_unitno = unitno_start
+        position = 0
         for batch_start, batch_text in self._split_text_in_batches(text, max_chars_per_batch):
             parsed = nlp(batch_text)
             for sent in parsed.sents:
@@ -49,20 +53,20 @@ class SentenceSplitter(BaseSplitter):
                     continue
                 units.append(
                     {
-                        "unit_id": next_unit_id,
-                        "doc_id": doc_id,
-                        "sentence_idx": sentence_idx,
+                        "unitno": next_unitno,
+                        "parent_docno": docno,
+                        "position": position,
                         "text": sent_text,
                         "char_start": batch_start + sent.start_char,
                         "char_end": batch_start + sent.end_char,
                     }
                 )
-                next_unit_id += 1
-                sentence_idx += 1
+                next_unitno += 1
+                position += 1
 
-        return units, next_unit_id
+        return units, next_unitno
 
-    def _load_spacy_model(self, model_name: str):
+    def _load_spacy_model(self, model_name: str, *, allow_blank_fallback: bool):
 
         if model_name in self._nlp_cache:
             return self._nlp_cache[model_name]
@@ -70,7 +74,12 @@ class SentenceSplitter(BaseSplitter):
         try:
             nlp = spacy.load(model_name)
 
-        except Exception:
+        except Exception as exc:
+            if not allow_blank_fallback:
+                raise RuntimeError(
+                    f"Unable to load spaCy model '{model_name}'. "
+                    "Install it or set split.allow_blank_fallback=true to opt into a blank English sentencizer."
+                ) from exc
             nlp = spacy.blank("en")
             nlp.add_pipe("sentencizer")
 

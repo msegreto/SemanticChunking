@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.config.loader import load_experiment_config
-from src.datasets.factory import DatasetFactory
+from src.datasets.service import process_dataset
 
 
 @dataclass(frozen=True)
@@ -291,8 +291,7 @@ def main() -> None:
             f"(split={job.key.split})..."
         )
         try:
-            processor = DatasetFactory.create(job.key.dataset_name)
-            payload = processor.process(job.config)
+            payload = process_dataset(job.config, force_rebuild=bool(job.config.get("force_rebuild_normalized", False)))
             metadata = payload.get("metadata", {}) if isinstance(payload, dict) else {}
             loaded_from = metadata.get("loaded_from", "unknown")
             num_documents = metadata.get("num_documents", "n/a")

@@ -7,35 +7,107 @@ from typing import Any
 
 import numpy as np
 
-from src.chunking.base import BaseChunker
+from src.chunking import _common
 from src.chunking.semantic_utils import (
     build_common_semantic_metadata,
-    sort_units_by_sentence_idx,
+    sort_units_by_position,
     validate_common_semantic_config,
 )
 from src.embeddings.base import BaseEmbedder
 from src.embeddings.factory import EmbedderFactory
 
 
-class BaseSemanticChunker(BaseChunker):
+class BaseSemanticChunker:
     def __init__(self) -> None:
         self._semantic_embedder: BaseEmbedder | None = None
         self._semantic_embedder_name: str | None = None
 
-    def validate_strategy_config(self, config: dict[str, Any]) -> dict[str, Any]:
-        validated = validate_common_semantic_config(config)
-        return self.validate_semantic_method_config(validated)
+    def chunk(self, routed_output: Any, config: dict[str, Any]) -> dict[str, Any]:
+        prepared = self.prepare_chunking_inputs(routed_output, config)
+        cached_output = self.try_load_reusable_output(prepared)
+        if cached_output is not None:
+            return cached_output
+
+        chunk_output = self.compute_chunk_output(prepared)
+        self.save_output(chunk_output, prepared)
+        return chunk_output
 
     def prepare_chunking_inputs(self, routed_output: Any, config: dict[str, Any]) -> dict[str, Any]:
-        prepared = super().prepare_chunking_inputs(routed_output, config)
+        validated_config = self.validate_config(config)
+        split_units = _common.validate_routed_output(routed_output)
+        grouped_units = _common.group_split_units(split_units)
+        run_dir = _common.build_run_dir(
+            dataset=validated_config["dataset"],
+            yaml_name=validated_config["yaml_name"],
+        )
+        prepared = {
+            "config": validated_config,
+            "split_units": split_units,
+            "grouped_units": grouped_units,
+            "run_dir": run_dir,
+        }
         split_metadata = routed_output.get("metadata", {}) if isinstance(routed_output, dict) else {}
+        split_units_path = routed_output.get("split_units_path") if isinstance(routed_output, dict) else None
+        if not isinstance(split_units_path, str) or not split_units_path.strip():
+            split_units_path = split_metadata.get("output_path")
         self.ensure_semantic_embeddings(
             split_units=prepared["split_units"],
             grouped_units=prepared["grouped_units"],
             config=prepared["config"],
-            split_path=split_metadata.get("split_path"),
+            split_path=split_units_path,
         )
         return prepared
+
+    def try_load_reusable_output(self, prepared: dict[str, Any]) -> dict[str, Any] | None:
+        cached_run = _common.load_cached_run(
+            run_dir=prepared["run_dir"],
+            grouped_units=prepared["grouped_units"],
+            config=prepared["config"],
+            saved_payload_matches=self.saved_payload_matches,
+        )
+        if cached_run is None:
+            return None
+        all_chunks, documents = cached_run
+        return _common.build_chunk_output(
+            all_chunks=all_chunks,
+            documents=documents,
+            config=prepared["config"],
+            run_dir=prepared["run_dir"],
+            reused_existing_chunks=True,
+            chunking_type=self.chunking_type,
+            build_strategy_config_metadata=self.build_strategy_config_metadata,
+        )
+
+    def compute_chunk_output(self, prepared: dict[str, Any]) -> dict[str, Any]:
+        all_chunks, documents = self.chunk_grouped_units(prepared["grouped_units"], prepared["config"])
+        return _common.build_chunk_output(
+            all_chunks=all_chunks,
+            documents=documents,
+            config=prepared["config"],
+            run_dir=prepared["run_dir"],
+            reused_existing_chunks=False,
+            chunking_type=self.chunking_type,
+            build_strategy_config_metadata=self.build_strategy_config_metadata,
+        )
+
+    def save_output(self, chunk_output: dict[str, Any], prepared: dict[str, Any]) -> None:
+        if prepared["config"]["save_chunks"]:
+            _common.save_run_chunks(
+                run_dir=prepared["run_dir"],
+                grouped_chunks=chunk_output["chunks"],
+                config=prepared["config"],
+                build_saved_payload_metadata=self.build_saved_payload_metadata,
+            )
+
+    def validate_config(self, config: Any) -> dict[str, Any]:
+        return _common.validate_chunking_config(config, self.validate_strategy_config)
+
+    def build_run_dir(self, dataset: str, yaml_name: str):
+        return _common.build_run_dir(dataset, yaml_name)
+
+    def validate_strategy_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        validated = validate_common_semantic_config(config)
+        return self.validate_semantic_method_config(validated)
 
     def saved_payload_matches(
         self,
@@ -77,8 +149,16 @@ class BaseSemanticChunker(BaseChunker):
             **self.build_semantic_method_metadata(config),
         }
 
+    def build_documents_from_grouped_chunks(
+        self,
+        grouped_units: dict[str, list[dict[str, Any]]],
+        grouped_chunks: list[tuple[str, list[dict[str, Any]]]],
+        reused: bool,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        return _common.build_documents_from_grouped_chunks(grouped_units, grouped_chunks, reused)
+
     def ordered_units(self, units: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return sort_units_by_sentence_idx(units)
+        return sort_units_by_position(units)
 
     def get_semantic_embedder(self, config: dict[str, Any]) -> BaseEmbedder:
         requested_name = config["embedding_model"]

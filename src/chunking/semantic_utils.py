@@ -70,8 +70,8 @@ def build_common_semantic_metadata(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def sort_units_by_sentence_idx(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(units, key=lambda item: item["sentence_idx"])
+def sort_units_by_position(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(units, key=lambda item: item["position"])
 
 
 def l2_normalize_embeddings(embeddings: Any) -> np.ndarray:

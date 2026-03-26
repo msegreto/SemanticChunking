@@ -31,7 +31,12 @@ def build_run_context(
         or config.get("experiment", {}).get("name")
         or default_experiment_name
     )
-    retriever_name = config.get("retrieval", {}).get("name", "unknown-retriever")
+    retrieval_cfg = config.get("retrieval", {})
+    retriever_name = (
+        retrieval_cfg.get("backend")
+        or retrieval_cfg.get("wmodel")
+        or "unknown-retrieval"
+    )
     embedder_name = config.get("embedding", {}).get("name", "unknown-embedder")
     return ExtrinsicRunContext(
         dataset=dataset_name,
@@ -48,8 +53,9 @@ def build_base_row(
     *,
     context: ExtrinsicRunContext,
     k: int | None,
-    index_path: Path,
-    index_metadata_path: Path,
+    retrieval_manifest_path: Path | None,
+    retrieval_run_path: Path | None,
+    retrieval_items_path: Path | None,
 ) -> dict[str, Any]:
     return {
         "dataset": context.dataset,
@@ -83,6 +89,7 @@ def build_base_row(
         "evidence_path": None,
         "answers_path": None,
         "generation_model": None,
-        "index_path": str(index_path),
-        "index_metadata_path": str(index_metadata_path),
+        "retrieval_manifest_path": str(retrieval_manifest_path) if retrieval_manifest_path is not None else None,
+        "retrieval_run_path": str(retrieval_run_path) if retrieval_run_path is not None else None,
+        "retrieval_items_path": str(retrieval_items_path) if retrieval_items_path is not None else None,
     }

@@ -1,246 +1,121 @@
 # Datasets Module
 
-Questa cartella gestisce il primo blocco reale del pipeline: acquisizione del dataset, verifica della sua consistenza, caricamento in memoria e conversione in un formato normalizzato unico per il resto del framework.
+Questa cartella gestisce il confine tra i dataset esterni e il formato interno usato dal pipeline PyTerrier-oriented del progetto.
 
-In pratica, tutto quello che viene dopo, cioè:
-- `src/splitting/`
-- `src/chunking/`
-- `src/embeddings/`
-- `src/retrieval/`
-- `src/evaluation/extrinsic/`
+L'API pubblica attuale e' piccola:
+- `src.datasets.process_dataset(config)`
+- `src.datasets.try_load_normalized(config)`
+- `src.datasets.ensure_dataset_prepared(config)`
+- `src.datasets.get_dataset(config)`
+- `src.datasets.PyTerrierNormalizedDataset`
 
-si aspetta di ricevere dati prodotti da questo modulo con una struttura coerente.
+## Obiettivo del modulo
 
-## Ruolo del modulo
+Il modulo ha tre responsabilita' principali:
 
-Il modulo dataset ha quattro responsabilità principali:
+1. risolvere il dataset richiesto dal config;
+2. costruire o riusare una cache `normalized` coerente;
+3. esporre quella cache sia come payload Python sia come dataset compatibile con PyTerrier.
 
-1. capire quale dataset è stato richiesto dal file YAML;
-2. verificare se esiste già una cache `normalized` riusabile;
-3. se la cache non è disponibile o non è compatibile, caricare la versione `raw` o scaricarla;
-4. restituire sempre un payload uniforme, indipendentemente dalla sorgente originaria.
-
-Questo significa che il resto del progetto non deve conoscere il formato originale dei file esterni, né sapere se i dati arrivano da BEIR, da MS MARCO reale o da una cache locale già costruita.
+Il resto del progetto non deve conoscere la sorgente originaria del dataset. Dopo questa fase tutto converge su una struttura normalizzata comune.
 
 ## File presenti
 
-### `base.py`
-È il file più importante del modulo.
+### `service.py`
 
-Definisce `BaseDatasetProcessor`, cioè il comportamento comune di tutti i processor dataset.
+E' l'entrypoint reale del modulo.
 
-Responsabilità principali:
-- risolvere le cartelle `raw` e `normalized`;
-- decidere se riusare la cache normalizzata;
-- controllare se la cache è completa e compatibile;
-- caricare i dati da `normalized`;
-- altrimenti delegare al processor concreto il caricamento della `raw`;
-- validare il payload finale;
-- salvare il formato normalizzato;
-- opzionalmente supportare la rimozione della `raw` dopo la creazione corretta della `normalized`.
+Contiene:
+- `process_dataset(...)`: prepara o riusa il dataset normalizzato e restituisce il payload completo;
+- `try_load_normalized(...)`: prova a caricare una cache gia' pronta se compatibile;
+- `ensure_dataset_prepared(...)`: garantisce la presenza del dataset e restituisce il path della cache;
+- `get_dataset(...)`: costruisce l'oggetto `PyTerrierNormalizedDataset`;
+- la risoluzione delle specifiche dataset (`beir/...`, `msmarco`, casi script-based come `beir/qasper` e `beir/techqa`).
 
-Il formato normalizzato atteso è:
+Il service oggi supporta due modalita' di costruzione:
+- `kind="pyterrier"`: dataset ottenuti tramite `pt.get_dataset(...)`;
+- `kind="script"`: dataset costruiti da converter dedicati, usati per i casi che non passano bene dal flusso PyTerrier puro.
 
-- `documents.jsonl`
-- `queries.json`
-- `qrels/<split>.json`
-- `metadata.json`
+### `pt_dataset.py`
 
-Il payload restituito in memoria deve sempre contenere:
-- `documents`
-- `queries`
+Definisce `PyTerrierNormalizedDataset`, che incapsula una directory `normalized` e la rende usabile sia dal codice interno sia dalle fasi di pipeline che si aspettano metodi stile PyTerrier.
+
+Metodi principali:
+- `get_corpus_iter()`
+- `get_topics()`
+- `get_qrels()`
+- `load_payload()`
+- `exists()`
+- `load_metadata()`
+
+Il payload prodotto da `load_payload()` contiene:
+- `corpus`
+- `topics`
 - `qrels`
 - `metadata`
-
-### `factory.py`
-Definisce `DatasetFactory`.
-
-È il punto di ingresso usato da [src/pipelines/experiment_orchestrator.py](/Users/mattiasegreto/Desktop/TesiCode/src/pipelines/experiment_orchestrator.py).
-
-La factory ha il compito di scegliere il processor corretto in base al nome del dataset richiesto nel YAML.
-
-Attualmente distingue in modo esplicito:
-- `beir/<dataset_name>` -> `BEIRDatasetProcessor`
-- `msmarco` -> `MSMarcoDatasetProcessor`
-- `msmarco-docs` -> `MSMarcoDatasetProcessor`
-
-Scelta importante del progetto:
-- `beir/msmarco` viene trattato come un normale dataset BEIR;
-- `msmarco` e `msmarco-docs` rappresentano il dataset MS MARCO reale.
-
-Questa distinzione è fondamentale per evitare ambiguità tra dataset con nomi simili ma sorgenti e formati diversi.
-
-### `beir.py`
-Contiene `BEIRDatasetProcessor`.
-
-È il processor generico per tutti i dataset in formato `beir/<dataset_name>`.
-
-Responsabilità:
-- verificare che la raw BEIR sia completa;
-- scaricare il dataset dal mirror BEIR se manca;
-- leggere:
-  - `corpus.jsonl`
-  - `queries.jsonl`
-  - `qrels/<split>.tsv`
-- convertire il tutto nel formato normalizzato interno.
-
-È un processor volutamente generico: il dataset specifico viene passato come parametro del costruttore e non richiede una classe dedicata per ogni collezione BEIR.
-
-### `scripted.py`
-Contiene processor specializzati che costruiscono direttamente la cache normalizzata tramite script dedicati.
-
-Attualmente usato per:
-- `beir/qasper` -> `scripts/download_qasper_hf_to_normalized.py`
-- `beir/techqa` -> `scripts/download_techqa_hf_to_normalized.py`
-
-Comportamento:
-- se la normalized richiesta esiste ed è compatibile, viene riusata;
-- altrimenti il processor lancia lo script di conversione e poi carica la normalized appena creata;
-- questo permette run end-to-end da YAML senza pre-download manuale.
-
-### `msmarco.py`
-Contiene `MSMarcoDatasetProcessor`.
-
-Questo processor oggi è dedicato al MS MARCO reale, non alla variante BEIR.
-
-Responsabilità:
-- verificare la presenza dei file raw ufficiali di MS MARCO;
-- scaricarli tramite `download_msmarco_documents(...)` se necessario;
-- leggere:
-  - `msmarco-docs.tsv`
-  - query TSV dello split richiesto
-  - qrels TSV dello split richiesto, se presenti
-- produrre un payload coerente con il formato interno del framework.
-
-Aspetto importante:
-- il processor accetta sia `msmarco` sia `msmarco-docs` come nomi richiesti;
-- nei metadata salva sia il nome richiesto sia un nome canonico, per rendere più chiaro il significato della cache.
-
-### `download_utils.py`
-Contiene la logica condivisa di supporto per i dataset.
-
-Responsabilità:
-- creare directory;
-- scaricare file remoti;
-- estrarre ZIP e GZIP;
-- scrivere `manifest.json`;
-- verificare la completezza delle strutture raw;
-- definire i file richiesti per BEIR e MS MARCO;
-- implementare il download BEIR e il download MS MARCO.
-
-Questo file è la fonte unica di verità per la logica di download del modulo.
+- `pt_dataset`
+- opzionalmente `evidences`
+- opzionalmente `answers`
 
 ### `__init__.py`
-File standard di package.
 
-Non contiene logica applicativa, ma rende importabile il modulo `src.datasets`.
+Riesporta l'API pubblica del modulo.
 
-## Flusso logico attuale
+## Formato normalized attuale
 
-Il comportamento desiderato del modulo è il seguente:
+Una cache dataset valida contiene almeno:
+- `corpus.jsonl`
+- `topics.jsonl`
+- `qrels/<split>.tsv`
+- `metadata.json`
 
-1. ricevere il config dataset dal file experiment YAML;
-2. risolvere `split`, `raw_dir` e `normalized_dir`;
-3. verificare se esiste una versione `normalized`;
-4. se esiste, verificare che sia compatibile con:
-   - dataset richiesto
-   - split richiesto
-   - schema version
-   - struttura dei file normalizzati
-5. se la `normalized` è compatibile, usarla e fermarsi lì;
-6. altrimenti verificare o preparare la `raw`;
-7. caricare la `raw`;
-8. validare il payload;
-9. salvare la `normalized`;
-10. opzionalmente eliminare la `raw` se la politica del progetto lo prevede.
+Possono esistere anche:
+- `evidences.json`
+- `answers.json`
 
-La regola di progetto più importante è questa:
+Lo schema version usato dal service e' `2.0`.
 
-- una volta creata correttamente la `normalized`, questa può diventare la fonte primaria e sufficiente;
-- la `raw` può essere considerata transitoria;
-- nelle esecuzioni successive il controllo dovrebbe fermarsi sulla `normalized`, salvo rebuild forzato o incompatibilità.
-- nel comportamento attuale del modulo, la `raw` viene eliminata di default dopo la creazione corretta della `normalized`, salvo override esplicito via config.
+## Flusso operativo
 
-## Struttura del payload normalizzato
+Quando l'orchestrator chiama `process_dataset(config)`:
 
-Tutti i processor devono restituire una struttura coerente con questa forma:
+1. il service risolve nome dataset, split e cartella normalized;
+2. se la cache esiste e il metadata e' compatibile, la riusa;
+3. altrimenti ricostruisce la cache:
+   - via PyTerrier per i dataset supportati da `pt.get_dataset(...)`;
+   - via script dedicato per dataset come `beir/qasper` e `beir/techqa`;
+4. ricarica la cache normalizzata appena prodotta;
+5. restituisce il payload Python con `pt_dataset` incluso.
 
-```python
-{
-    "documents": {
-        "<doc_id>": {
-            ...
-        }
-    },
-    "queries": {
-        "<query_id>": "<query_text>"
-    },
-    "qrels": {
-        "<query_id>": {
-            "<doc_id>": <relevance_int>
-        }
-    },
-    "metadata": {
-        ...
-    }
-}
-```
+Questo rende uniforme il passaggio alla fase successiva di `split`.
 
-Il `BaseDatasetProcessor` oggi valida esplicitamente:
-- presenza delle chiavi principali;
-- tipo di `documents`, `queries`, `qrels`, `metadata`;
-- tipo degli identificativi;
-- tipo dei testi query;
-- tipo dei valori di relevance nei qrels.
+## Campi config effettivamente rilevanti
 
-Questo riduce la probabilità che errori di parsing dataset si propaghino alle fasi successive.
-
-## Metadata e cache
-
-I metadata salvati in `metadata.json` hanno un ruolo importante:
-- descrivono il dataset;
-- documentano da dove arrivano i dati;
-- permettono di decidere se una cache `normalized` è riusabile;
-- aiutano il debugging senza dover riaprire i file raw.
-
-I campi più importanti sono:
-- `dataset_name`
+Nel contratto attuale i campi dataset davvero usati sono:
+- `name`
 - `split`
-- `processor`
-- `raw_path`
-- `normalized_path`
-- `normalized_schema_version`
-- `normalized_files`
+- `normalized_dir`
+- `download_if_missing`
+- i parametri opzionali specifici dei converter script-based, quando applicabili
 
-Nel caso di MSMARCO reale può comparire anche:
-- `canonical_dataset_name`
+Campi legacy come `data_dir`, `use_normalized_if_available` e `save_normalized` non fanno piu' parte del comportamento runtime e non dovrebbero essere reintrodotti nei nuovi YAML.
 
-## Collegamenti con il resto del progetto
+## Collegamento con il resto del progetto
 
-Questo modulo è collegato direttamente a:
+Il modulo dataset alimenta direttamente:
+- [`src/pipelines/experiment_orchestrator.py`](/Users/mattiasegreto/Desktop/TesiCode/src/pipelines/experiment_orchestrator.py)
+- [`src/splitting/transformer.py`](/Users/mattiasegreto/Desktop/TesiCode/src/splitting/transformer.py)
+- [`src/evaluation/extrinsic/io.py`](/Users/mattiasegreto/Desktop/TesiCode/src/evaluation/extrinsic/io.py)
 
-- [scripts/run_pipeline.py](/Users/mattiasegreto/Desktop/TesiCode/scripts/run_pipeline.py)
-  perché da lì parte l'orchestrator;
-- [scripts/download_datasets.py](/Users/mattiasegreto/Desktop/TesiCode/scripts/download_datasets.py)
-  che usa la factory per preparare le raw;
-- [src/pipelines/experiment_orchestrator.py](/Users/mattiasegreto/Desktop/TesiCode/src/pipelines/experiment_orchestrator.py)
-  che chiama `DatasetFactory.create(...)` e poi `processor.process(...)`;
-- [src/splitting/](/Users/mattiasegreto/Desktop/TesiCode/src/splitting/README.md)
-  che usa il payload dataset come input;
-- [src/evaluation/extrinsic/io.py](/Users/mattiasegreto/Desktop/TesiCode/src/evaluation/extrinsic/io.py)
-  che legge query e qrels normalizzati dal disco.
+Il punto chiave e' questo:
+- lo split puo' iterare sul corpus tramite `pt_dataset.get_corpus_iter()`;
+- il retrieval puo' ottenere topics e qrels tramite `pt_dataset.get_topics()` e `pt_dataset.get_qrels()`;
+- le valutazioni extrinsic possono leggere i file normalizzati dal disco quando serve.
 
-Dal punto di vista dei dati persistiti, le cartelle coinvolte sono soprattutto:
-- [data/raw](/Users/mattiasegreto/Desktop/TesiCode/data/raw/README.md)
-- [data/normalized](/Users/mattiasegreto/Desktop/TesiCode/data/normalized/README.md)
+## Note pratiche
 
-## Scelte progettuali attuali
+- `beir/<dataset_name>` viene di norma risolto via PyTerrier come `irds:beir/<dataset_name>`.
+- `msmarco` e `msmarco-docs` vengono risolti come `irds:msmarco-document`.
+- `beir/qasper` e `beir/techqa` restano casi speciali gestiti da script di conversione dedicati.
 
-Le scelte attuali del modulo dataset sono:
-
-- meglio fallire con errore esplicito che usare un fallback fittizio;
-- meglio avere un formato normalizzato unico che tanti parser sparsi nel resto del codice;
-- meglio distinguere chiaramente MS MARCO reale e `beir/msmarco`;
-- meglio trattare la `normalized` come fonte primaria una volta costruita correttamente.
-
-Queste scelte vanno nella direzione di rendere il framework più robusto e meno ambiguo nelle fasi successive della tesi.
+In sintesi: questo modulo non implementa piu' una gerarchia di processor/factory legacy; oggi e' un service sottile che produce una cache normalized e un wrapper `PyTerrierNormalizedDataset` su cui si appoggia il resto del pipeline.

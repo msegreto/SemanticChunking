@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from src.splitting.factory import SplitterFactory
+from src.splitting import SplitTransformer
 
 
 def _utc_now_iso() -> str:
@@ -32,15 +32,6 @@ def _load_json(path: Path) -> dict[str, Any]:
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
-
-
-def _resolve_text(document: dict[str, Any]) -> str:
-    for key in ("text", "contents", "body", "document"):
-        value = document.get(key)
-        if isinstance(value, str) and value.strip():
-            return value
-    return ""
-
 
 def _sanitize_dataset_subpath(dataset_name: str) -> Path:
     parts = [p for p in dataset_name.strip("/").split("/") if p]
@@ -146,7 +137,7 @@ def _discover_jobs(
         normalized_files = meta.get("normalized_files")
         if not isinstance(normalized_files, dict):
             continue
-        docs_rel = normalized_files.get("documents")
+        docs_rel = normalized_files.get("corpus")
         if not isinstance(docs_rel, str) or not docs_rel:
             continue
 
@@ -187,12 +178,16 @@ def _run_one_dataset(job: DatasetJob, *, model_name: str, force: bool) -> tuple[
     if not force and bool(old_state.get("completed", False)):
         return True, "already completed, skipped"
 
-    splitter = SplitterFactory.create("sentence")
-    split_cfg = {"model": model_name}
-    components = splitter.build_streaming_components(split_cfg)
-
-    job.output_path.parent.mkdir(parents=True, exist_ok=True)
-    job.output_path.write_text("", encoding="utf-8")
+    split_cfg = {
+        "type": "sentence",
+        "model": model_name,
+        "output_path": str(job.output_path),
+    }
+    transformer = SplitTransformer.from_config(
+        split_config=split_cfg,
+        dataset_name=job.dataset_name,
+        run_name=job.output_path.stem,
+    )
 
     started_at = datetime.now(timezone.utc)
     started_iso = started_at.replace(microsecond=0).isoformat()
@@ -223,31 +218,24 @@ def _run_one_dataset(job: DatasetJob, *, model_name: str, force: bool) -> tuple[
     next_unit_id = 0
 
     try:
-        with job.documents_path.open("r", encoding="utf-8") as f_in, job.output_path.open(
-            "a", encoding="utf-8"
-        ) as f_out:
+        documents: list[dict[str, Any]] = []
+        with job.documents_path.open("r", encoding="utf-8") as f_in:
             for raw_line in f_in:
                 line = raw_line.strip()
                 if not line:
                     continue
-                document = json.loads(line)
-                doc_id = str(document.get("doc_id") or document.get("id") or "").strip()
-                if not doc_id:
-                    raise ValueError("Found document without doc_id/id in normalized documents file.")
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    documents.append(row)
 
-                text = _resolve_text(document)
-                units, next_unit_id = splitter.split_document_streaming(
-                    doc_id=doc_id,
-                    text=text,
-                    unit_id_start=next_unit_id,
-                    nlp=components["nlp"],
-                    max_chars_per_batch=int(components["max_chars_per_batch"]),
-                )
-                for unit in units:
-                    f_out.write(json.dumps(unit, ensure_ascii=False) + "\n")
-
-                docs_processed += 1
-                units_processed += len(units)
+        split_output = transformer.build(documents)
+        split_units = split_output.get("split_units", [])
+        split_meta = split_output.get("metadata", {})
+        if not isinstance(split_units, list):
+            raise TypeError("SplitTransformer output is missing 'split_units' list.")
+        docs_processed = int(split_meta.get("num_documents", job.expected_docs if job.expected_docs > 0 else 0))
+        units_processed = len(split_units)
+        next_unit_id = max((int(unit.get("unitno", -1)) for unit in split_units if isinstance(unit, dict)), default=-1) + 1
 
         finished_at = datetime.now(timezone.utc)
         finished_iso = finished_at.replace(microsecond=0).isoformat()

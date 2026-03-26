@@ -5,6 +5,22 @@ import pickle
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
+from src.datasets.service import get_split
+
+
+_TASK_ALIASES: dict[str, str] = {
+    "document_retrieval": "document_retrieval",
+    "doc_retrieval": "document_retrieval",
+    "document": "document_retrieval",
+    "evidence_retrieval": "evidence_retrieval",
+    "evidence": "evidence_retrieval",
+    "answer_generation": "answer_generation",
+    "generation": "answer_generation",
+    "qa_generation": "answer_generation",
+}
+
 
 class JsonlItemStore:
     def __init__(self, jsonl_path: Path, *, expected_count: int | None = None) -> None:
@@ -64,11 +80,30 @@ class JsonlItemStore:
 
 
 def _get_document_retrieval_cfg(config: dict[str, Any]) -> dict[str, Any]:
-    return (
-        config.get("evaluation", {})
-        .get("extrinsic_tasks", {})
-        .get("document_retrieval", {})
-    )
+    return get_extrinsic_task_cfg(config, "document_retrieval")
+
+
+def canonicalize_task_name(task_name: str) -> str:
+    normalized = task_name.strip().lower().replace("-", "_")
+    return _TASK_ALIASES.get(normalized, normalized)
+
+
+def get_extrinsic_task_cfg(config: dict[str, Any], task_name: str) -> dict[str, Any]:
+    normalized = canonicalize_task_name(task_name)
+    extrinsic_tasks = config.get("evaluation", {}).get("extrinsic_tasks", {})
+    if not isinstance(extrinsic_tasks, dict):
+        return {}
+
+    candidates = [normalized]
+    for alias, canonical in _TASK_ALIASES.items():
+        if canonical == normalized and alias != normalized:
+            candidates.append(alias)
+
+    for candidate in candidates:
+        value = extrinsic_tasks.get(candidate)
+        if isinstance(value, dict):
+            return value
+    return {}
 
 
 def resolve_normalized_dataset_dir(config: dict[str, Any]) -> Path | None:
@@ -105,9 +140,9 @@ def check_document_retrieval_prerequisites(config: dict[str, Any]) -> tuple[bool
 def resolve_queries_path(config: dict[str, Any]) -> Path:
     normalized_dataset_dir = resolve_normalized_dataset_dir(config)
     if normalized_dataset_dir is not None:
-        path = normalized_dataset_dir / "queries.json"
+        path = normalized_dataset_dir / "topics.jsonl"
         if not path.exists():
-            raise FileNotFoundError(f"Queries file not found: {path}")
+            raise FileNotFoundError(f"Topics file not found: {path}")
         return path
 
     dataset_cfg = config.get("dataset", {})
@@ -126,14 +161,9 @@ def resolve_queries_path(config: dict[str, Any]) -> Path:
             "or dataset.queries_path."
         )
 
-    # fallback legacy
-    candidates = [
-        Path(data_dir) / "queries.json",
-        Path(data_dir) / "queries.jsonl",
-    ]
-    for path in candidates:
-        if path.exists():
-            return path
+    path = Path(data_dir) / "topics.jsonl"
+    if path.exists():
+        return path
 
     raise FileNotFoundError(
         "Could not resolve queries file from config. "
@@ -146,10 +176,14 @@ def resolve_qrels_path(config: dict[str, Any]) -> Path:
     dataset_cfg = config.get("dataset", {})
 
     normalized_dataset_dir = resolve_normalized_dataset_dir(config)
-    split = doc_ret_cfg.get("split") or dataset_cfg.get("split", "dev")
+    split_override = doc_ret_cfg.get("split")
+    if isinstance(split_override, str) and split_override.strip():
+        split = split_override.strip()
+    else:
+        split = get_split(dataset_cfg)
 
     if normalized_dataset_dir is not None:
-        path = normalized_dataset_dir / "qrels" / f"{split}.json"
+        path = normalized_dataset_dir / "qrels" / f"{split}.tsv"
         if not path.exists():
             raise FileNotFoundError(f"Qrels file not found: {path}")
         return path
@@ -162,7 +196,6 @@ def resolve_qrels_path(config: dict[str, Any]) -> Path:
         return path
 
     data_dir = dataset_cfg.get("data_dir")
-    dataset_split = dataset_cfg.get("split", "dev")
     if not data_dir:
         raise ValueError(
             "Could not resolve qrels path. Set either "
@@ -170,15 +203,9 @@ def resolve_qrels_path(config: dict[str, Any]) -> Path:
             "or dataset.qrels_path."
         )
 
-    # fallback legacy
-    candidates = [
-        Path(data_dir) / "qrels" / f"{dataset_split}.json",
-        Path(data_dir) / "qrels" / f"{dataset_split}.tsv",
-        Path(data_dir) / "qrels.json",
-    ]
-    for path in candidates:
-        if path.exists():
-            return path
+    path = Path(data_dir) / "qrels" / f"{split}.tsv"
+    if path.exists():
+        return path
 
     raise FileNotFoundError(
         "Could not resolve qrels file from config. "
@@ -187,7 +214,7 @@ def resolve_qrels_path(config: dict[str, Any]) -> Path:
 
 
 def resolve_evidence_path(config: dict[str, Any]) -> Path:
-    task_cfg = config.get("evaluation", {}).get("extrinsic_tasks", {}).get("evidence_retrieval", {})
+    task_cfg = get_extrinsic_task_cfg(config, "evidence_retrieval")
     evidence_path = task_cfg.get("evidence_path")
     if isinstance(evidence_path, str) and evidence_path.strip():
         return Path(evidence_path)
@@ -199,7 +226,7 @@ def resolve_evidence_path(config: dict[str, Any]) -> Path:
 
 
 def resolve_answers_path(config: dict[str, Any]) -> Path:
-    task_cfg = config.get("evaluation", {}).get("extrinsic_tasks", {}).get("answer_generation", {})
+    task_cfg = get_extrinsic_task_cfg(config, "answer_generation")
     answers_path = task_cfg.get("answers_path")
     if isinstance(answers_path, str) and answers_path.strip():
         return Path(answers_path)
@@ -211,15 +238,6 @@ def resolve_answers_path(config: dict[str, Any]) -> Path:
 
 
 def load_queries(path: Path) -> dict[str, str]:
-    if path.suffix == ".json":
-        with path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        if not isinstance(data, dict):
-            raise ValueError(f"queries.json must contain a dict, got: {type(data)}")
-
-        return {str(query_id): str(text) for query_id, text in data.items()}
-
     if path.suffix == ".jsonl":
         queries: dict[str, str] = {}
         with path.open("r", encoding="utf-8") as f:
@@ -227,8 +245,8 @@ def load_queries(path: Path) -> dict[str, str]:
                 if not line.strip():
                     continue
                 record = json.loads(line)
-                qid = record.get("_id") or record.get("query_id") or record.get("id")
-                text = record.get("text") or record.get("query")
+                qid = record.get("qid")
+                text = record.get("query")
                 if qid is None or text is None:
                     continue
                 queries[str(qid)] = str(text)
@@ -237,38 +255,21 @@ def load_queries(path: Path) -> dict[str, str]:
     raise ValueError(f"Unsupported queries format: {path}")
 
 
-def load_qrels(path: Path) -> dict[str, set[str]]:
-    if path.suffix == ".json":
-        with path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        if not isinstance(data, dict):
-            raise ValueError(f"qrels json must contain a dict, got: {type(data)}")
-
-        qrels: dict[str, set[str]] = {}
-        for query_id, doc_map in data.items():
-            if not isinstance(doc_map, dict):
-                raise ValueError(
-                    f"Each qrels entry must be a dict of doc_id -> relevance. "
-                    f"Got {type(doc_map)} for query_id={query_id}"
-                )
-            qrels[str(query_id)] = {
-                str(doc_id) for doc_id, rel in doc_map.items() if float(rel) > 0
-            }
-        return qrels
-
+def load_qrels(path: Path) -> dict[str, dict[str, float]]:
     if path.suffix == ".tsv":
         import csv
 
-        qrels: dict[str, set[str]] = {}
+        qrels: dict[str, dict[str, float]] = {}
         with path.open("r", encoding="utf-8") as f:
             reader = csv.DictReader(f, delimiter="\t")
             for row in reader:
-                qid = str(row["query-id"])
-                doc_id = str(row["corpus-id"])
-                score = float(row["score"])
+                qid = str(row.get("qid") or "")
+                doc_id = str(row.get("docno") or "")
+                score = float(row.get("label") or 0.0)
+                if not qid or not doc_id:
+                    continue
                 if score > 0:
-                    qrels.setdefault(qid, set()).add(doc_id)
+                    qrels.setdefault(qid, {})[doc_id] = score
         return qrels
 
     raise ValueError(f"Unsupported qrels format: {path}")
@@ -291,6 +292,45 @@ def load_index_metadata(path: Path) -> dict[str, Any]:
             raise ValueError("metadata.pkl does not contain 'items' or 'items_jsonl_path'")
 
     return metadata
+
+
+def load_run_tsv(path: Path) -> dict[str, list[dict[str, Any]]]:
+    df = pd.read_csv(path, sep="\t")
+    required = {"qid", "docno", "score"}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(f"Run TSV is missing required columns: {sorted(missing)}")
+
+    run: dict[str, list[dict[str, Any]]] = {}
+    if "rank" in df.columns:
+        df = df.sort_values(["qid", "rank", "score"], ascending=[True, True, False])
+    else:
+        df = df.sort_values(["qid", "score"], ascending=[True, False])
+
+    for row in df.to_dict(orient="records"):
+        qid = str(row["qid"])
+        run.setdefault(qid, []).append(
+            {
+                "docno": str(row["docno"]),
+                "score": float(row["score"]),
+            }
+        )
+    return run
+
+
+def load_items_by_docno(path: Path) -> dict[str, dict[str, Any]]:
+    items: dict[str, dict[str, Any]] = {}
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            docno = str(row.get("docno") or "").strip()
+            if not docno:
+                continue
+            items[docno] = row
+    return items
 
 
 def load_evidences(path: Path) -> dict[str, list[dict[str, str]]]:

@@ -4,21 +4,18 @@ import re
 from pathlib import Path
 from typing import Any, Sequence
 
-from src.embeddings.factory import EmbedderFactory
-from src.retrieval.factory import RetrieverFactory
-
-from .base import BaseExtrinsicEvaluator
 from .common import build_base_row, build_run_context
 from .io import (
     load_evidences,
-    load_index_metadata,
+    load_items_by_docno,
     load_queries,
+    load_run_tsv,
     resolve_evidence_path,
     resolve_queries_path,
 )
 
 
-class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
+class EvidenceRetrievalEvaluator:
     @property
     def task_name(self) -> str:
         return "evidence_retrieval"
@@ -27,10 +24,12 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
         self,
         *,
         config: dict[str, Any],
-        index_path: Path,
-        index_metadata_path: Path,
+        retrieval_output: dict[str, Any],
         ks: Sequence[int],
     ) -> list[dict[str, Any]]:
+        manifest_path = Path(str(retrieval_output.get("manifest_path", "")))
+        run_path = Path(str(retrieval_output.get("run_path", "")))
+        items_path = Path(str(retrieval_output.get("items_path", "")))
         try:
             evidence_file = resolve_evidence_path(config)
         except Exception:
@@ -40,8 +39,9 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
             return self._build_rows(
                 config=config,
                 ks=[None],
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                manifest_path=manifest_path,
+                run_path=run_path,
+                items_path=items_path,
                 status="skipped",
                 details="Task skipped: empty ks.",
                 evidence_path=None,
@@ -53,8 +53,9 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
             return self._build_rows(
                 config=config,
                 ks=resolved_ks,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                manifest_path=manifest_path,
+                run_path=run_path,
+                items_path=items_path,
                 status="skipped",
                 details="Task skipped: missing evidence_path in YAML.",
                 evidence_path=None,
@@ -64,8 +65,9 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
             return self._build_rows(
                 config=config,
                 ks=resolved_ks,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                manifest_path=manifest_path,
+                run_path=run_path,
+                items_path=items_path,
                 status="skipped",
                 details=f"Task skipped: evidence annotations file not found at {evidence_file}.",
                 evidence_path=str(evidence_file),
@@ -74,30 +76,21 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
         queries_path = resolve_queries_path(config)
         queries = load_queries(queries_path)
         evidences = load_evidences(evidence_file)
-        items = load_index_metadata(index_metadata_path)["items"]
+        items_by_docno = load_items_by_docno(items_path)
+        run_by_qid = load_run_tsv(run_path)
 
         ordered_qids = [qid for qid in queries.keys() if qid in evidences]
         if not ordered_qids:
             return self._build_rows(
                 config=config,
                 ks=resolved_ks,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                manifest_path=manifest_path,
+                run_path=run_path,
+                items_path=items_path,
                 status="skipped",
                 details="Task skipped: no overlapping query ids between queries and evidences.",
                 evidence_path=str(evidence_file),
             )
-
-        retrieval_cfg = config["retrieval"]
-        embedding_cfg = config["embedding"]
-        embedder = self._load_embedder(embedding_cfg)
-        retriever = self._load_retriever(retrieval_cfg)
-        retriever.load_index(str(index_path), str(index_metadata_path))
-
-        query_texts = [queries[qid] for qid in ordered_qids]
-        query_embeddings = self._encode_queries(embedder, query_texts, embedding_cfg)
-        search_output = retriever.search(query_embeddings, top_k=max(resolved_ks))
-        all_indices = search_output["indices"]
 
         metrics: dict[int, dict[str, float]] = {}
         evaluable_count = 0
@@ -107,7 +100,7 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
             f1_sum = 0.0
             count = 0
 
-            for row_idx, qid in enumerate(ordered_qids):
+            for qid in ordered_qids:
                 annotations = evidences.get(qid, [])
                 gold_texts = [
                     ann.get("evidence_text", "").strip()
@@ -117,8 +110,8 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
                 if not gold_texts:
                     continue
 
-                top_chunk_indices = all_indices[row_idx].tolist()[:k]
-                retrieved_sentences = self._collect_retrieved_sentences(top_chunk_indices, items)
+                top_chunk_hits = run_by_qid.get(qid, [])[:k]
+                retrieved_sentences = self._collect_retrieved_sentences(top_chunk_hits, items_by_docno)
                 p, r, f1 = self._sentence_level_prf(
                     retrieved_sentences=retrieved_sentences,
                     gold_evidence_texts=gold_texts,
@@ -141,8 +134,9 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
             return self._build_rows(
                 config=config,
                 ks=resolved_ks,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                manifest_path=manifest_path,
+                run_path=run_path,
+                items_path=items_path,
                 status="skipped",
                 details="Task skipped: no non-empty evidence annotations found.",
                 evidence_path=str(evidence_file),
@@ -155,23 +149,36 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
             num_queries=len(ordered_qids),
             num_evaluable_queries=evaluable_count,
             queries_path=str(queries_path),
-            index_path=index_path,
-            index_metadata_path=index_metadata_path,
+            manifest_path=manifest_path,
+            run_path=run_path,
+            items_path=items_path,
             evidence_path=str(evidence_file),
         )
 
     @staticmethod
     def _collect_retrieved_sentences(
-        chunk_indices: list[int],
-        items: list[dict[str, Any]],
+        chunk_hits: list[dict[str, Any]],
+        items_by_docno: dict[str, dict[str, Any]],
     ) -> list[str]:
         sentences: list[str] = []
-        for chunk_idx in chunk_indices:
-            if chunk_idx < 0 or chunk_idx >= len(items):
+        for hit in chunk_hits:
+            docno = str(hit.get("docno") or "")
+            if not docno:
                 continue
-            item = items[chunk_idx]
-            metadata = item.get("metadata", {}) if isinstance(item, dict) else {}
-            chunk_sentences = metadata.get("sentences", []) if isinstance(metadata, dict) else []
+            item = items_by_docno.get(docno)
+            if item is None:
+                continue
+            chunk_sentences: list[Any] = []
+            if isinstance(item, dict):
+                direct_sentences = item.get("sentences", [])
+                if isinstance(direct_sentences, list):
+                    chunk_sentences = direct_sentences
+                else:
+                    metadata = item.get("metadata", {})
+                    if isinstance(metadata, dict):
+                        metadata_sentences = metadata.get("sentences", [])
+                        if isinstance(metadata_sentences, list):
+                            chunk_sentences = metadata_sentences
 
             if isinstance(chunk_sentences, list) and chunk_sentences:
                 for sentence in chunk_sentences:
@@ -248,23 +255,6 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
             return 0.0, 0.0, 0.0
         return precision, recall, (2.0 * precision * recall) / (precision + recall)
 
-    @staticmethod
-    def _load_embedder(embedding_cfg: dict[str, Any]):
-        embedder_name = embedding_cfg.get("name")
-        if not isinstance(embedder_name, str) or not embedder_name.strip():
-            raise ValueError("Embedding config requires a non-empty 'name' for extrinsic evaluation.")
-        return EmbedderFactory.create(embedder_name.strip())
-
-    @staticmethod
-    def _load_retriever(retrieval_cfg: dict[str, Any]):
-        retriever_name = retrieval_cfg.get("name", "")
-        return RetrieverFactory.create(str(retriever_name).strip().lower())
-
-    @staticmethod
-    def _encode_queries(embedder, query_texts: list[str], embedding_cfg: dict[str, Any]):
-        query_embeddings, _ = embedder.encode_texts(query_texts, embedding_cfg)
-        return query_embeddings
-
     def _build_scored_rows(
         self,
         *,
@@ -274,8 +264,9 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
         num_queries: int,
         num_evaluable_queries: int,
         queries_path: str,
-        index_path: Path,
-        index_metadata_path: Path,
+        manifest_path: Path,
+        run_path: Path,
+        items_path: Path,
         evidence_path: str | None,
     ) -> list[dict[str, Any]]:
         context = build_run_context(
@@ -288,8 +279,9 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
             row = build_base_row(
                 context=context,
                 k=k,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                retrieval_manifest_path=manifest_path,
+                retrieval_run_path=run_path,
+                retrieval_items_path=items_path,
             )
             row.update(
                 {
@@ -310,8 +302,9 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
         *,
         config: dict[str, Any],
         ks: Sequence[int | None],
-        index_path: Path,
-        index_metadata_path: Path,
+        manifest_path: Path,
+        run_path: Path,
+        items_path: Path,
         status: str,
         details: str,
         evidence_path: str | None,
@@ -326,8 +319,9 @@ class EvidenceRetrievalEvaluator(BaseExtrinsicEvaluator):
             row = build_base_row(
                 context=context,
                 k=k,
-                index_path=index_path,
-                index_metadata_path=index_metadata_path,
+                retrieval_manifest_path=manifest_path,
+                retrieval_run_path=run_path,
+                retrieval_items_path=items_path,
             )
             row.update(
                 {

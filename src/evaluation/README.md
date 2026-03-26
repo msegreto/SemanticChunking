@@ -12,6 +12,6 @@ File presenti:
 - `extrinsic/`: evaluator, IO e metriche per retrieval.
 
 Collegamenti:
-- l'orchestrator invoca prima la parte intrinsic direttamente;
-- la parte extrinsic viene poi richiamata tramite `scripts/run_extrinsic_eval.py`;
+- l'orchestrator invoca prima la parte intrinsic tramite `IntrinsicEvaluationTransformer`;
+- la parte extrinsic viene poi invocata tramite `ExtrinsicEvaluationTransformer`, consumando direttamente l'output del retrieval;
 - gli output finiscono in `results/intrinsic/` e `results/extrinsic/`.

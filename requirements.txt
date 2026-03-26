@@ -16,3 +16,4 @@ langchain-experimental>=0.4.1
 langchain-huggingface>=1.2.1
 scikit-learn>=1.5
 bert-score>=0.3.13
+pyterrier 

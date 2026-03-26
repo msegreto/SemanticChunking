@@ -1,18 +1,14 @@
 # Retrieval Module
 
-Questa cartella gestisce costruzione, salvataggio, caricamento e interrogazione degli indici vettoriali.
+Questa cartella gestisce il retrieval batch dense FAISS come stage di pipeline. L'unica API pubblica e' [`RetrievalTransformer`](/Users/mattiasegreto/Desktop/TesiCode/src/retrieval/transformer.py).
 
-File presenti:
-- `base.py`: interfaccia astratta `BaseRetriever`.
-- `factory.py`: `RetrieverFactory`, usata dall'orchestrator per selezionare backend `numpy` o `faiss`.
-- `numpy_retriever.py`: implementazione semplice basata su array NumPy; salva `vectors.npy`, `metadata.pkl` e `manifest.json`.
-- `faiss_retriever.py`: implementazione basata su FAISS; salva `index.faiss`, `metadata.pkl` e `manifest.json`.
-- `__init__.py`: abilita gli import del package.
+Struttura:
+- `transformer.py`: entrypoint pubblico. Esegue retrieval dense FAISS su chunk e query embeddizzati e, se disponibili i topics, produce anche una `run.tsv`.
+- `__init__.py`: esporta `RetrievalTransformer`.
 
-Collegamenti:
-- input: embeddings prodotti da `src/embeddings/`;
-- output persistito: artefatti sotto `data/indexes/...`;
-- uso successivo: `scripts/run_extrinsic_eval.py` e `src/evaluation/extrinsic/` caricano questi indici per misurare la retrieval quality;
-- il manifest viene usato anche dall'orchestrator per capire se un indice esistente puo' essere riusato senza ricostruirlo.
+Contratto:
+- input: `chunk_output` prodotto da `src/chunking/`
+- opzionalmente anche un dataset PyTerrier-compatible per ottenere `topics` e `qrels`
+- output: artefatti sotto `data/pt_indexes/...`, `items.jsonl`, `manifest.json` e, se presenti i topics, una `run.tsv`
 
-Entrambi i backend supportano distanza `cosine` e `l2`; con `cosine` i vettori vengono normalizzati.
+Il backend disponibile e' `dense_faiss`: retrieval vettoriale con embedding di chunk e query, indicizzazione FAISS e distanza `cosine` o `l2`.

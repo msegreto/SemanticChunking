@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import tarfile
@@ -104,11 +105,26 @@ def _unique_preserve_order(values: Iterable[str]) -> list[str]:
     return out
 
 
-def _write_documents_jsonl(path: Path, documents: dict[str, dict[str, Any]]) -> None:
+def _write_corpus_jsonl(path: Path, documents: dict[str, dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as f:
         for doc_id, payload in documents.items():
-            row = {"id": doc_id, **payload}
+            row = {"docno": doc_id, **payload}
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _write_topics_jsonl(path: Path, queries: dict[str, str]) -> None:
+    with path.open("w", encoding="utf-8") as f:
+        for query_id, text in queries.items():
+            f.write(json.dumps({"qid": query_id, "query": text}, ensure_ascii=False) + "\n")
+
+
+def _write_qrels_tsv(path: Path, qrels: dict[str, dict[str, int]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["qid", "docno", "label"], delimiter="\t")
+        writer.writeheader()
+        for query_id, doc_map in qrels.items():
+            for doc_id, label in doc_map.items():
+                writer.writerow({"qid": query_id, "docno": doc_id, "label": int(label)})
 
 
 def _first_non_empty(row: dict[str, Any], keys: Iterable[str]) -> str:
@@ -675,16 +691,16 @@ def main() -> None:
     if not qrels:
         raise RuntimeError("No qrels were created from source dataset.")
 
-    documents_path = target_dir / "documents.jsonl"
-    queries_path = target_dir / "queries.json"
-    qrels_path = qrels_dir / f"{args.output_split}.json"
+    documents_path = target_dir / "corpus.jsonl"
+    queries_path = target_dir / "topics.jsonl"
+    qrels_path = qrels_dir / f"{args.output_split}.tsv"
     evidences_path = target_dir / "evidences.json"
     answers_path = target_dir / "answers.json"
     metadata_path = target_dir / "metadata.json"
 
-    _write_documents_jsonl(documents_path, documents)
-    queries_path.write_text(json.dumps(queries, ensure_ascii=False, indent=2), encoding="utf-8")
-    qrels_path.write_text(json.dumps(qrels, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_corpus_jsonl(documents_path, documents)
+    _write_topics_jsonl(queries_path, queries)
+    _write_qrels_tsv(qrels_path, qrels)
     evidences_path.write_text(json.dumps(evidences, ensure_ascii=False, indent=2), encoding="utf-8")
     answers_path.write_text(json.dumps(answers, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -709,13 +725,13 @@ def main() -> None:
         ),
         "num_documents": len(documents),
         "num_queries": len(queries),
-        "num_qrels_queries": len(qrels),
-        "normalized_schema_version": "1.0",
+        "num_qrels": sum(len(docs) for docs in qrels.values()),
+        "normalized_schema_version": "2.0",
         "has_reference_answers_in_source": source_has_answer_fields,
         "normalized_files": {
-            "documents": "documents.jsonl",
-            "queries": "queries.json",
-            "qrels": f"qrels/{args.output_split}.json",
+            "corpus": "corpus.jsonl",
+            "topics": "topics.jsonl",
+            "qrels": f"qrels/{args.output_split}.tsv",
             "evidences": "evidences.json",
             "answers": "answers.json",
         },

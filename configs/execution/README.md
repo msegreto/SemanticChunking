@@ -8,7 +8,9 @@ Uso consigliato in un file `configs/experiments/*.yaml`:
 execution_profile: default
 
 execution:
-  streaming_docs_per_run: 100
+  stages:
+    split:
+      force_rebuild: true
 ```
 
 Il merge e' deep-merge:

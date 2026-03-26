@@ -1,11 +1,9 @@
 # Intrinsic Evaluation
 
-Questa cartella contiene la valutazione intrinsic della qualità dei chunk, cioè metriche che operano direttamente sulla struttura e sul contenuto dei chunk senza passare da un task esterno.
+Questa cartella contiene la valutazione intrinsic della qualità dei chunk come stage di pipeline. L'unica API pubblica e' [`IntrinsicEvaluationTransformer`](/Users/mattiasegreto/Desktop/TesiCode/src/evaluation/intrinsic/transformer.py).
 
-File presenti:
-- `base.py`: interfaccia `BaseIntrinsicEvaluator`.
-- `factory.py`: factory che istanzia l'evaluator richiesto.
-- `default.py`: implementazione principale. Normalizza l'output del chunker, calcola le metriche abilitate, aggrega i risultati e li salva in `results/intrinsic/`.
+Struttura:
+- `transformer.py`: entrypoint pubblico. Calcola le metriche intrinsic e salva i risultati.
 - `metrics/`: implementazioni delle metriche e utility statistiche.
 - `models/`: scorer usato dalle metriche per calcolare perplexity o conditional perplexity.
 - `__init__.py`: abilita gli import del package.

@@ -394,8 +394,8 @@ class SemanticBreakpointChunker(BaseSemanticChunker):
             "doc_id": doc_id,
             "text": self._join_unit_texts(span),
             "sentences": sentences,
-            "start_sentence_idx": first_unit["sentence_idx"],
-            "end_sentence_idx": last_unit["sentence_idx"],
+            "start_unit_position": first_unit["position"],
+            "end_unit_position": last_unit["position"],
             "position": position,
             "metadata": {
                 "chunking_type": self.chunking_type,

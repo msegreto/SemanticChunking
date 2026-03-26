@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
-from src.evaluation.intrinsic.base import BaseIntrinsicEvaluator
+try:
+    import pyterrier as pt
+except ImportError:  # pragma: no cover
+    pt = None
+
 from src.evaluation.intrinsic.metrics.boundary_clarity import compute_boundary_clarity
 from src.evaluation.intrinsic.metrics.chunk_stickiness import compute_chunk_stickiness
 from src.evaluation.intrinsic.metrics.stats import build_global_statistics
@@ -12,8 +16,25 @@ from src.evaluation.intrinsic.metrics.utils import count_total_chunks, count_wor
 from src.evaluation.intrinsic.models.perplexity_scorer import PerplexityScorer
 
 
-class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
-    def evaluate(self, chunk_output: Any, config: Dict[str, Any]) -> Dict[str, Any]:
+_PtTransformerBase = pt.Transformer if pt is not None else object
+
+
+class IntrinsicEvaluationTransformer(_PtTransformerBase):
+    def __init__(
+        self,
+        *,
+        evaluation_config: dict[str, Any],
+        run_context: dict[str, Any] | None = None,
+    ) -> None:
+        self.evaluation_config = dict(evaluation_config)
+        self.run_context = dict(run_context or {})
+
+    def transform(self, inp: Any) -> dict[str, Any]:
+        return self.build(inp)
+
+    def build(self, chunk_output: Any) -> dict[str, Any]:
+        config = dict(self.evaluation_config)
+        config["_run_context"] = dict(self.run_context)
         docs = normalize_chunk_output(chunk_output)
 
         model_cfg = config.get("intrinsic_model", {})
@@ -23,11 +44,10 @@ class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
         bc_enabled = metrics_cfg.get("boundary_clarity", True)
         cs_enabled = metrics_cfg.get("chunk_stickiness", True)
 
-        per_document_metrics: List[Dict[str, Any]] = []
-
-        bc_values: List[float] = []
-        csc_values: List[float] = []
-        csi_values: List[float] = []
+        per_document_metrics: list[dict[str, Any]] = []
+        bc_values: list[float] = []
+        csc_values: list[float] = []
+        csi_values: list[float] = []
 
         for doc in docs:
             chunks = doc["chunks"]
@@ -36,7 +56,7 @@ class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
             total_words = sum(count_words(text) for text in chunk_texts)
             num_chunks = len(chunks)
 
-            doc_result: Dict[str, Any] = {
+            doc_result: dict[str, Any] = {
                 "doc_id": doc["doc_id"],
                 "num_chunks": num_chunks,
                 "avg_chunk_chars": (float(total_chars) / num_chunks) if num_chunks > 0 else 0.0,
@@ -44,20 +64,12 @@ class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
             }
 
             if bc_enabled:
-                bc_score = compute_boundary_clarity(
-                    doc=doc,
-                    scorer=scorer,
-                    config=config,
-                )
+                bc_score = compute_boundary_clarity(doc=doc, scorer=scorer, config=config)
                 doc_result["boundary_clarity"] = bc_score
                 bc_values.append(bc_score)
 
             if cs_enabled:
-                cs_result = compute_chunk_stickiness(
-                    doc=doc,
-                    scorer=scorer,
-                    config=config,
-                )
+                cs_result = compute_chunk_stickiness(doc=doc, scorer=scorer, config=config)
                 doc_result["chunk_stickiness_complete"] = cs_result["complete"]
                 doc_result["chunk_stickiness_incomplete"] = cs_result["incomplete"]
                 doc_result["chunk_stickiness_complete_edges"] = cs_result["complete_edges"]
@@ -67,14 +79,11 @@ class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
 
             per_document_metrics.append(doc_result)
 
-        aggregated_metrics: Dict[str, float] = {}
-
+        aggregated_metrics: dict[str, float] = {}
         if bc_values:
             aggregated_metrics["boundary_clarity"] = sum(bc_values) / len(bc_values)
-
         if csc_values:
             aggregated_metrics["chunk_stickiness_complete"] = sum(csc_values) / len(csc_values)
-
         if csi_values:
             aggregated_metrics["chunk_stickiness_incomplete"] = sum(csi_values) / len(csi_values)
 
@@ -93,20 +102,17 @@ class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
             },
         }
 
-        self._save_results(results, config)
+        self.save_results(results, config)
         return results
 
-    def _save_results(self, results: Dict[str, Any], config: Dict[str, Any]) -> None:
+    def save_results(self, results: dict[str, Any], config: dict[str, Any]) -> None:
         save_cfg = dict(config.get("save", {}))
         save_cfg["_run_context"] = config.get("_run_context", {})
-        save_enabled = save_cfg.get("enabled", True)
-
-        if not save_enabled:
+        if not save_cfg.get("enabled", True):
             return
 
         output_dir = Path("results") / "intrinsic"
         output_dir.mkdir(parents=True, exist_ok=True)
-
         output_path, global_output_path = self._build_output_paths(save_cfg)
 
         with output_path.open("w", encoding="utf-8") as f:
@@ -116,15 +122,12 @@ class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
         with global_output_path.open("w", encoding="utf-8") as f:
             json.dump(global_stats, f, indent=2, ensure_ascii=False)
 
-    def _build_output_paths(self, save_cfg: Dict[str, Any]) -> Tuple[Path, Path]:
+    def _build_output_paths(self, save_cfg: dict[str, Any]) -> tuple[Path, Path]:
         output_dir = Path("results") / "intrinsic"
         filename_stem = self._build_filename_stem(save_cfg)
-        main_name = f"{filename_stem}.json"
-        global_name = f"{filename_stem}_global.json"
+        return output_dir / f"{filename_stem}.json", output_dir / f"{filename_stem}_global.json"
 
-        return output_dir / main_name, output_dir / global_name
-
-    def _build_filename_stem(self, save_cfg: Dict[str, Any]) -> str:
+    def _build_filename_stem(self, save_cfg: dict[str, Any]) -> str:
         run_context = save_cfg.get("_run_context", {})
         if isinstance(run_context, dict):
             dataset_cfg = run_context.get("dataset", {})
@@ -139,27 +142,24 @@ class DefaultIntrinsicEvaluator(BaseIntrinsicEvaluator):
 
         dataset_name = self._slugify(dataset_cfg.get("name", "unknown-dataset"))
         chunking_name = self._slugify(chunking_cfg.get("type", "unknown-chunking"))
-
         routing_name = "no-routing"
         if isinstance(router_cfg, dict) and router_cfg.get("enabled", False):
             routing_name = self._slugify(router_cfg.get("name", "default-router"))
-
         experiment_name = self._slugify(
             save_cfg.get("experiment_name")
             or run_context.get("experiment_name")
             or experiment_cfg.get("name")
             or "intrinsic-eval"
         )
-
         config_path = run_context.get("config_path")
         if config_path:
             config_name = self._slugify(Path(str(config_path)).stem)
         else:
             config_name = self._slugify(save_cfg.get("yaml_name") or "default-run")
-
         return f"{dataset_name}_{chunking_name}_{routing_name}_{experiment_name}_{config_name}"
 
-    def _slugify(self, value: Any) -> str:
+    @staticmethod
+    def _slugify(value: Any) -> str:
         text = str(value).replace("/", "-").strip()
         if not text:
             return "item"

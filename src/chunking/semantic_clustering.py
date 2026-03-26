@@ -333,20 +333,20 @@ class SemanticClusteringChunker(BaseSemanticChunker):
         cluster_origin: str,
     ) -> dict[str, Any]:
         span = [units[idx] for idx in sorted(cluster_indices)]
-        sentence_indices = [unit["sentence_idx"] for unit in span]
-        start_sentence_idx = min(sentence_indices)
-        end_sentence_idx = max(sentence_indices)
+        unit_positions = [unit["position"] for unit in span]
+        start_unit_position = min(unit_positions)
+        end_unit_position = max(unit_positions)
         sentences = [unit["text"] for unit in span]
-        is_contiguous = self._is_contiguous(sentence_indices)
+        is_contiguous = self._is_contiguous(unit_positions)
 
         return {
             "chunk_id": f"{doc_id}::chunk_{position}",
             "doc_id": doc_id,
             "text": self._join_unit_texts(span),
             "sentences": sentences,
-            "sentence_indices": sentence_indices,
-            "start_sentence_idx": start_sentence_idx,
-            "end_sentence_idx": end_sentence_idx,
+            "unit_positions": unit_positions,
+            "start_unit_position": start_unit_position,
+            "end_unit_position": end_unit_position,
             "position": position,
             "metadata": {
                 "chunking_type": self.chunking_type,
@@ -365,15 +365,15 @@ class SemanticClusteringChunker(BaseSemanticChunker):
                 "cluster_origin": cluster_origin,
                 "cluster_size": len(span),
                 "is_contiguous": is_contiguous,
-                "sentence_indices": sentence_indices,
+                "unit_positions": unit_positions,
             },
         }
 
     @staticmethod
-    def _is_contiguous(sentence_indices: list[int]) -> bool:
-        if not sentence_indices:
+    def _is_contiguous(unit_positions: list[int]) -> bool:
+        if not unit_positions:
             return True
-        return sentence_indices == list(range(sentence_indices[0], sentence_indices[-1] + 1))
+        return unit_positions == list(range(unit_positions[0], unit_positions[-1] + 1))
 
     @staticmethod
     def _join_unit_texts(units: list[dict[str, Any]]) -> str:

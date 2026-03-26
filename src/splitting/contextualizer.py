@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
-from src.splitting.base import BaseSplitter
 from src.splitting.context_resolver.client import HFContextualizerClient
 from src.splitting.context_resolver.resolver import Contextualizer
 from src.splitting.sentence import SentenceSplitter
 
 
-class ContextualizerSplitter(BaseSplitter):
+class ContextualizerSplitter:
     MAX_CHARS_PER_BATCH = SentenceSplitter.MAX_CHARS_PER_BATCH
+
+    @staticmethod
+    def resolve_output_path(config: dict) -> Path | None:
+        output_path = config.get("output_path")
+        return Path(output_path) if output_path else None
 
     def __init__(self):
         self._sentence_splitter = SentenceSplitter()
@@ -47,9 +52,9 @@ class ContextualizerSplitter(BaseSplitter):
     def split_document_streaming(
         self,
         *,
-        doc_id: str,
+        docno: str,
         text: str,
-        unit_id_start: int,
+        unitno_start: int,
         nlp: Any,
         max_chars_per_batch: int,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -62,9 +67,9 @@ class ContextualizerSplitter(BaseSplitter):
             raise ValueError("Missing sentence_nlp in contextualizer splitter components.")
 
         units, next_unit_id = self._sentence_splitter.split_document_streaming(
-            doc_id=doc_id,
+            docno=docno,
             text=text,
-            unit_id_start=unit_id_start,
+            unitno_start=unitno_start,
             nlp=sentence_nlp,
             max_chars_per_batch=max_chars_per_batch,
         )

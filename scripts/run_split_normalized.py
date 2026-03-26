@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from src.config.loader import load_experiment_config
-from src.datasets.factory import DatasetFactory
-from src.splitting.factory import SplitterFactory
+from src.datasets.service import try_load_normalized
+from src.splitting import SplitTransformer
 
 
 def _utc_now_iso() -> str:
@@ -70,15 +70,6 @@ def _resolve_state_path(explicit: Path | None, split_output_path: Path) -> Path:
         return explicit
     return split_output_path.parent / "state_split.json"
 
-
-def _resolve_text(document: dict[str, Any]) -> str:
-    for key in ("text", "contents", "body", "document"):
-        value = document.get(key)
-        if isinstance(value, str) and value.strip():
-            return value
-    return ""
-
-
 def main() -> None:
     args = parse_args()
     config_path = args.config
@@ -93,13 +84,13 @@ def main() -> None:
     split_type = str(split_cfg.get("type", "")).strip()
     if not split_type:
         raise ValueError("Missing required config: split.type")
-    if split_type != "sentence":
-        raise ValueError(
-            "This script currently supports only split.type='sentence' for streaming split."
-        )
-
-    splitter = SplitterFactory.create(split_type)
-    split_output_path = splitter.resolve_output_path(split_cfg)
+    run_name = config_path.stem
+    transformer = SplitTransformer.from_config(
+        split_config=split_cfg,
+        dataset_name=dataset_name,
+        run_name=run_name,
+    )
+    split_output_path = transformer.resolve_output_path()
     if split_output_path is None:
         raise ValueError(
             "Missing required config: split.output_path. "
@@ -113,8 +104,7 @@ def main() -> None:
         print("[INFO] Nothing to do. Use --force to rerun.")
         return
 
-    processor = DatasetFactory.create(dataset_name)
-    normalized_data = processor.try_load_reusable_normalized(dataset_cfg)
+    normalized_data = try_load_normalized(dataset_cfg)
     if normalized_data is None:
         raise RuntimeError(
             "Normalized dataset not available/reusable for this config. "
@@ -128,9 +118,9 @@ def main() -> None:
         raise ValueError("Dataset metadata is missing normalized_path.")
     if not isinstance(normalized_files, dict):
         raise ValueError("Dataset metadata is missing normalized_files.")
-    docs_rel = normalized_files.get("documents")
+    docs_rel = normalized_files.get("corpus")
     if not isinstance(docs_rel, str) or not docs_rel:
-        raise ValueError("Dataset metadata is missing normalized documents filename.")
+        raise ValueError("Dataset metadata is missing normalized corpus filename.")
 
     documents_path = Path(normalized_path) / docs_rel
     if not documents_path.exists():
@@ -138,7 +128,7 @@ def main() -> None:
 
     expected_docs = metadata.get("num_documents")
     if not isinstance(expected_docs, int) or expected_docs < 0:
-        expected_docs = len(normalized_data.get("documents", {}))
+        expected_docs = len(normalized_data.get("corpus", []))
 
     print(f"[INFO] Config: {config_path}")
     print(f"[INFO] Dataset: {dataset_name}")
@@ -150,9 +140,6 @@ def main() -> None:
     if args.dry_run:
         print("[DRY-RUN] Split not executed.")
         return
-
-    split_output_path.parent.mkdir(parents=True, exist_ok=True)
-    split_output_path.write_text("", encoding="utf-8")
 
     started_at = datetime.now(timezone.utc)
     started_iso = started_at.replace(microsecond=0).isoformat()
@@ -181,34 +168,16 @@ def main() -> None:
     next_unit_id = 0
     docs_processed = 0
     units_processed = 0
-    components = splitter.build_streaming_components(split_cfg)
 
     try:
-        with documents_path.open("r", encoding="utf-8") as f_in, split_output_path.open(
-            "a", encoding="utf-8"
-        ) as f_out:
-            for raw_line in f_in:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                document = json.loads(line)
-                doc_id = str(document.get("doc_id") or document.get("id") or "").strip()
-                if not doc_id:
-                    raise ValueError("Found document without doc_id/id in normalized documents file.")
-
-                text = _resolve_text(document)
-                units, next_unit_id = splitter.split_document_streaming(
-                    doc_id=doc_id,
-                    text=text,
-                    unit_id_start=next_unit_id,
-                    nlp=components["nlp"],
-                    max_chars_per_batch=int(components["max_chars_per_batch"]),
-                )
-                for unit in units:
-                    f_out.write(json.dumps(unit, ensure_ascii=False) + "\n")
-
-                docs_processed += 1
-                units_processed += len(units)
+        split_output = transformer.build(normalized_data)
+        split_units = split_output.get("split_units", [])
+        split_meta = split_output.get("metadata", {})
+        if not isinstance(split_units, list):
+            raise TypeError("SplitTransformer output is missing 'split_units' list.")
+        docs_processed = int(split_meta.get("num_documents", expected_docs if expected_docs > 0 else 0))
+        units_processed = len(split_units)
+        next_unit_id = max((int(unit.get("unitno", -1)) for unit in split_units if isinstance(unit, dict)), default=-1) + 1
 
         finished_at = datetime.now(timezone.utc)
         finished_iso = finished_at.replace(microsecond=0).isoformat()

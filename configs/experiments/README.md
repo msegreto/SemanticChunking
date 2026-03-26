@@ -2,21 +2,17 @@
 
 Questa cartella contiene i file YAML che descrivono un esperimento end-to-end.
 
-Ogni file viene passato a `scripts/run_pipeline.py`, che a sua volta carica `src/pipelines/experiment_orchestrator.py`. L'orchestrator legge le sezioni del YAML e attiva in sequenza dataset processing, splitting, routing, chunking, intrinsic evaluation, embedding, indexing ed extrinsic evaluation.
+Ogni file viene passato a `scripts/run_pipeline.py`, che a sua volta carica `src/pipelines/experiment_orchestrator.py`. L'orchestrator legge le sezioni del YAML e attiva in sequenza dataset processing, splitting, routing, chunking, intrinsic evaluation, retrieval ed extrinsic evaluation.
 
 ## Aggiornamento stato attuale
 
-Il pipeline è oggi **streaming-only**:
-- l'esecuzione procede per finestre incrementali;
-- lo stato di resume viene salvato in `stream_state.json` e `split_state.json`;
-- il router (se abilitato) viene applicato nel flusso streaming, attualmente a livello doc-by-doc.
-
-Di conseguenza, i nuovi YAML dovrebbero valorizzare almeno:
-- `execution.streaming_docs_per_run`
-- opzionalmente `execution.streaming_run_until_complete` (default `true`)
+Il pipeline e' oggi lineare e stage-based:
+- `dataset >> split >> router opzionale >> chunking >> intrinsic >> retrieval >> extrinsic`;
+- il riuso avviene tramite artefatti salvati dalle singole fasi;
+- non esistono piu' finestre streaming o resume incrementale nell'orchestrator.
 
 File presenti:
-- `base.yaml`: configurazione baseline oggi più importante. Usa `beir/fiqa`, sentence splitting, router disabilitato, chunking `fixed`, embedder logico `mpnet`, retriever `numpy` e valutazioni intrinsic + extrinsic.
+- `base.yaml`: configurazione baseline oggi piu' importante. Usa `beir/fiqa`, sentence splitting, router disabilitato, chunking `fixed`, embedder logico `mpnet`, retrieval dense FAISS e valutazioni intrinsic + extrinsic.
 - `msmarco_fixed_3.yaml`: variante sperimentale aggiuntiva, utile come secondo esempio di configurazione.
 
 Come si collega al resto del progetto:
@@ -26,7 +22,7 @@ Come si collega al resto del progetto:
 - sezione `chunking`: seleziona la strategia in `src/chunking/`; per i metodi semantici in riproduzione usare type espliciti come `semantic_breakpoint` e `semantic_clustering`, non `semantic`;
 - sezione `embedding`: sceglie il modello in `src/embeddings/`;
 - sezione `retrieval`: guida la costruzione indice in `src/retrieval/`;
-- sezione `evaluation`: guida `src/evaluation/intrinsic/` e `scripts/run_extrinsic_eval.py`.
+- sezione `evaluation`: guida `src/evaluation/intrinsic/` e `src/evaluation/extrinsic/`.
 
 In pratica, questa cartella rappresenta il punto di configurazione centrale del framework.
 
@@ -38,7 +34,7 @@ Nei file in `configs/experiments/` e' consigliato usare:
 Anche la sezione `execution` puo' essere centralizzata in profili sotto `configs/execution/`.
 Nei file esperimento e' consigliato usare:
 - `execution_profile: <nome_profilo>` (es. `default` o `force_rebuild`)
-- un blocco `execution:` minimale solo con override locali (es. `streaming_docs_per_run: 100`).
+- un blocco `execution:` minimale solo con override locali per `allow_reuse`, `force_rebuild` o `stages.<nome_fase>`.
 
 ## Come costruire un YAML completo
 
@@ -48,7 +44,7 @@ Quando crei un nuovo file in questa cartella, il modo piu' semplice e sicuro e' 
 2. scegli lo split (`sentence` oggi e' quello realmente usato);
 3. scegli se abilitare il router;
 4. scegli il chunker e i suoi parametri specifici;
-5. scegli embedder e retriever;
+5. scegli embedder e retrieval model;
 6. decidi quali valutazioni attivare;
 7. decidi la politica di riuso cache tramite `execution`.
 
@@ -60,16 +56,15 @@ evaluation_profile: default
 execution_profile: default
 
 execution:
-  streaming_docs_per_run: 100
+  stages:
+    split:
+      force_rebuild: true
 
 dataset:
   name: "beir/fiqa"            # oppure "msmarco" / "msmarco-docs"
-  data_dir: "data/raw/fiqa"
   normalized_dir: "data/normalized/beir/fiqa"   # opzionale
   split: "dev"
   download_if_missing: true
-  use_normalized_if_available: true
-  save_normalized: true
   delete_raw_after_normalized: true             # opzionale
   force_rebuild_normalized: false               # opzionale
   max_documents: null                           # opzionale, utile per debug
@@ -79,7 +74,6 @@ dataset:
 split:
   type: sentence
   model: en_core_web_sm
-  save_output: true
   output_path: data/processed/fiqa/sentences.jsonl
 
 router:
@@ -129,8 +123,8 @@ embedding:
 
 retrieval:
   enabled: true
-  name: "numpy"                # oppure "faiss"
-  distance: "cosine"
+  backend: dense_faiss
+  distance: cosine
   normalize: true
   output_dir: null             # opzionale
 
@@ -138,6 +132,11 @@ evaluation:
   extrinsic_tasks_to_run: [document_retrieval]
   intrinsic_model:
     backend: lexical           # override opzionale del profilo
+  extrinsic_tasks:
+    answer_generation:
+      reader_backend: seq2seqlm
+      reader_model: google/flan-t5-base
+      top_k: 5
 ```
 
 ## Spiegazione delle sezioni
@@ -150,10 +149,6 @@ Nome logico dell'esperimento. Viene usato nei nomi dei risultati extrinsic e com
 
 Controlla il riuso delle cache e i rebuild forzati.
 Di solito viene risolta via `execution_profile` con eventuali override locali.
-
-Campi specifici streaming:
-- `streaming_docs_per_run`: numero di documenti processati per finestra.
-- `streaming_run_until_complete`: se `false`, esegue una sola finestra per run.
 
 - `allow_reuse`: abilita il riuso globale quando possibile.
 - `force_rebuild`: forza il ricalcolo globale di tutte le fasi che supportano cache.
@@ -173,12 +168,9 @@ Definisce quale dataset usare e come gestire raw e normalized.
 Campi piu' importanti:
 - `name`: richiesto. Formati supportati oggi: `beir/<dataset_name>`, `msmarco`, `msmarco-docs`.
   - nota: `beir/qasper` e `beir/techqa` hanno un ingest dedicato che può costruire automaticamente la `normalized` tramite script converter, senza richiedere pre-download manuale.
-- `data_dir`: path della raw.
 - `normalized_dir`: opzionale; se omesso il codice usa `data/normalized/<dataset_name>`.
 - `split`: split del dataset, per esempio `dev` o `test`.
 - `download_if_missing`: se `true`, tenta il download automatico.
-- `use_normalized_if_available`: riusa la cache normalized se compatibile.
-- `save_normalized`: salva la cache normalized dopo il parsing raw.
 - `delete_raw_after_normalized`: di default il codice puo' cancellare la raw dopo il salvataggio corretto della normalized.
 - `max_documents`: utile per run di debug; quando e' impostato, il codice evita il riuso della normalized completa.
 
@@ -195,7 +187,6 @@ Seleziona come trasformare i documenti in unita' testuali.
 Campi piu' usati:
 - `type`: `sentence` oppure `contextualizer`.
 - `model`: modello spaCy per `sentence`.
-- `save_output`: salva le split units su disco.
 - `output_path`: path del JSONL prodotto.
 
 Nota: nei file attuali compare anche `split.split:` vuoto. Non sembra necessario per il codice attuale, quindi nei nuovi YAML puoi tranquillamente ometterlo.
@@ -250,7 +241,7 @@ Nota importante: il codice accetta sia `lambda` sia `lambda_weight`, ma nei file
 
 ### `embedding`
 
-Definisce l'embedder della fase retrieval.
+Definisce l'embedder condiviso usato dalle fasi che ne hanno bisogno, soprattutto semantic chunking e alcune metriche o evaluator.
 
 Campi principali:
 - `name`: oggi la factory supporta alias di `mpnet`, `bge` e `stella`.
@@ -262,20 +253,29 @@ Campi opzionali gestiti dal validatore:
 - `convert_to_numpy`
 - `log_embedding_calls`
 
-Nota pratica: la valutazione extrinsic `document_retrieval` ricarica l'embedder tramite `EmbedderFactory`, quindi funziona con tutti gli embedder registrati (`mpnet`, `bge`, `stella`, o altri aggiunti alla factory), pur richiedendo naturalmente che query e documenti siano codificati con lo stesso embedder.
+Nota pratica: con `retrieval.backend: dense_faiss` l'embedder viene usato anche dal retrieval. Resta inoltre rilevante per semantic chunking e per alcuni evaluator extrinsic.
 
 ### `retrieval`
 
-Configura la costruzione dell'indice vettoriale.
+Configura la costruzione dell'indice e del run di retrieval.
 
 Campi principali:
 - `enabled`
-- `name`: `numpy` oppure `faiss`
-- `distance`: `cosine` oppure `l2`
-- `normalize`: se `true`, normalizza i vettori
-- `output_dir`: opzionale; se omesso usa `data/indexes/<dataset>/<chunking>/<config_file_stem>` (fallback: `experiment_name`, poi `embedding.name`)
+- `backend`: `dense_faiss`
+- `distance`: per esempio `cosine` o `l2`
+- `normalize`: normalizza gli embedding prima dell'indicizzazione
+- `output_dir`: opzionale; se omesso usa `data/pt_indexes/<dataset>/<chunking>/<config_file_stem>`
 
-L'orchestrator prova a riusare un indice esistente se trova un `manifest.json` compatibile con la configurazione corrente.
+Il retrieval salva indice, manifest, `items.jsonl` e, se il dataset espone i topics, anche `run.tsv`.
+
+### `evaluation.extrinsic_tasks.answer_generation`
+
+Quando abiliti `answer_generation`, il task usa un reader `pyterrier_rag` sui top chunk del retrieval.
+
+Campi principali:
+- `reader_backend`: oggi supportato `seq2seqlm`.
+- `reader_model`: modello Hugging Face del reader, per esempio `google/flan-t5-base`.
+- `top_k`: quanti chunk usare per generare la risposta.
 
 ### `evaluation`
 
@@ -321,16 +321,12 @@ experiment_name: "fiqa_fixed"
 
 dataset:
   name: "beir/fiqa"
-  data_dir: "data/raw/fiqa"
   split: "dev"
   download_if_missing: true
-  use_normalized_if_available: true
-  save_normalized: true
 
 split:
   type: sentence
   model: en_core_web_sm
-  save_output: true
   output_path: data/processed/fiqa/sentences.jsonl
 
 router:
@@ -352,8 +348,8 @@ embedding:
 
 retrieval:
   enabled: true
-  name: "numpy"
-  distance: "cosine"
+  backend: dense_faiss
+  distance: cosine
   normalize: true
 
 evaluation:
